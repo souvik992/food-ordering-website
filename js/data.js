@@ -71,3 +71,18 @@ window.ITEMS = [
 window.COURIER = { name: 'Mitchel Santnar', id: '13256626' };
 window.DELIVERY_FEE = 2.0;
 window.VOUCHERS = { GOOD10: 0.1, FOODIE20: 0.2 }; // code -> discount
+
+// Demo payment options: no real payments are processed.
+window.PAYMENT_METHODS = [
+  { id: 'card', type: 'card', title: 'Visa •••• 4242', sub: 'Expires 08/28' },
+  { id: 'wallet', type: 'wallet', title: 'Foodie Wallet', sub: 'Balance $35.00' },
+  { id: 'cash', type: 'cash', title: 'Cash on Delivery', sub: 'Pay when your order arrives' },
+];
+
+window.FAQS = [
+  { q: 'How long does delivery take?', a: 'Most orders arrive in 20–40 minutes. You can see a live estimate on the order tracking page.' },
+  { q: 'Can I schedule an order for later?', a: 'Yes. At checkout choose “Schedule” under Delivery Time and pick a time slot.' },
+  { q: 'How do I use a voucher?', a: 'Enter your code in the voucher box on the Cart page. Try GOOD10 or FOODIE20.' },
+  { q: 'Can I cancel my order?', a: 'Orders can be cancelled until the restaurant starts preparing them. Contact support for help.' },
+  { q: 'What payment methods do you accept?', a: 'Cards, Foodie Wallet and Cash on Delivery. Manage them under Account → Payment Methods.' },
+];
