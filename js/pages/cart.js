@@ -1,50 +1,75 @@
-// Cart and checkout
+// Cart and checkout. Totals come from the hub (a quote); the order goes to the hub, which sends it to the restaurant's POS.
 (function (A) {
-  const { I, state, esc, money, byId, media, totals, option } = A;
+  const { I, state, esc, money, byId, media, option } = A;
 
-  function summaryRows(t) {
-    return `
-      <dl class="totals">
-        <div><dt>Subtotal</dt><dd>${money(t.subtotal)}</dd></div>
-        ${t.discount ? `<div class="disc"><dt>Discount (${state.voucher})</dt><dd>−${money(t.discount)}</dd></div>` : ''}
-        <div><dt>Delivery Fee</dt><dd>${money(t.fee)}</dd></div>
-        <div class="total"><dt>Total Amount</dt><dd>${money(t.total)}</dd></div>
-      </dl>`;
+  const lineName = (l) => {
+    const mods = A.modifierNames(l);
+    return mods.length ? `<small class="muted">${esc(mods.join(', '))}</small>` : '';
+  };
+
+  // Fills #quote with the hub's total (or the reason there is none) and enables the button that needs it
+  function showQuote(buttonSelector) {
+    const box = document.getElementById('quote');
+    const btn = document.querySelector(buttonSelector);
+    if (!box) return;
+    box.innerHTML = '<p class="muted">Working out the total…</p>';
+    if (btn) btn.disabled = true;
+    A.getQuote().then((q) => {
+      if (!document.body.contains(box)) return;
+      box.innerHTML = A.summaryRows(q);
+      const price = document.getElementById('cta-price');
+      if (price) price.textContent = money(q.total);
+      if (btn) btn.disabled = !A.shop.open;
+    }).catch((e) => {
+      if (!document.body.contains(box)) return;
+      box.innerHTML = `<p class="err">${esc(e.message)}</p>`;
+      const price = document.getElementById('cta-price');
+      if (price) price.textContent = '';
+      // the cart page can still go on to checkout to fix the address
+      if (btn && buttonSelector === '#to-checkout') btn.disabled = !A.shop.open || e.code !== 'NO_LOCATION';
+    });
+  }
+
+  function fulfilmentChips() {
+    const f = A.shop.fulfilment || {};
+    if (!(f.delivery && f.pickup)) return `<p class="muted">${f.delivery ? 'Delivery only' : 'Pickup only'}</p>`;
+    return `<div class="seg">
+      <button class="${state.fulfilment === 'DELIVERY' ? 'active' : ''}" data-action="set-fulfilment" data-value="DELIVERY">${I.bike} Delivery</button>
+      <button class="${state.fulfilment === 'PICKUP' ? 'active' : ''}" data-action="set-fulfilment" data-value="PICKUP">${I.bag} Pickup</button>
+    </div>`;
   }
 
   /* ---------- Cart ---------- */
   A.route('cart', {
     tab: 'cart',
     render() {
-      const entries = Object.entries(state.cart);
       const head = A.header('Cart', {
-        right: `<button class="icon-btn soft" data-action="clear-cart" aria-label="Clear cart" ${entries.length ? '' : 'disabled'}>${I.trash}</button>`,
+        right: `<button class="icon-btn soft" data-action="clear-cart" aria-label="Clear cart" ${state.cart.length ? '' : 'disabled'}>${I.trash}</button>`,
       });
-      if (!entries.length) {
+      if (!state.cart.length) {
         return `<section class="page panel">${head}${A.empty('🛍️', 'Your cart is empty', 'Add something tasty to get started.', { href: '#/menu', label: 'Browse menu' })}</section>`;
       }
-      const t = totals();
       return `
         <section class="page panel has-cta">
           ${head}
+          ${A.shopBanner()}
           <div class="split">
             <ul class="cart-list">
-              ${entries.map(([id, q]) => {
-                const item = byId(id);
+              ${state.cart.map((l, i) => {
+                const item = byId(l.itemId);
                 return `
                 <li class="cart-item">
-                  <a href="#/item/${item.id}">${media(item, 'thumb', 300)}</a>
+                  <a href="#/item/${encodeURIComponent(item.id)}">${media(item, 'thumb')}</a>
                   <div class="grow">
                     <div class="ci-top">
-                      <div><h3>${esc(item.name)}</h3><p class="muted">By ${esc(item.by)}</p></div>
-                      <span class="rating">${I.star}${item.rating}</span>
+                      <div><h3>${A.vegMark(item)}${esc(item.name)}</h3>${lineName(l)}</div>
                     </div>
                     <div class="ci-bottom">
-                      <strong>${money(item.price * q)}</strong>
+                      <span class="muted">${money(item.price)}${l.modifierIds.length ? ' + options' : ''} each</span>
                       <div class="qty">
-                        <button data-action="dec" data-id="${item.id}" aria-label="Decrease">${I.minus}</button>
-                        <span>${q}</span>
-                        <button class="plus" data-action="inc" data-id="${item.id}" aria-label="Increase">${I.plus}</button>
+                        <button data-action="dec" data-i="${i}" aria-label="Decrease">${I.minus}</button>
+                        <span>${l.qty}</span>
+                        <button class="plus" data-action="inc" data-i="${i}" aria-label="Increase">${I.plus}</button>
                       </div>
                     </div>
                   </div>
@@ -53,143 +78,164 @@
             </ul>
 
             <aside class="summary">
-              <form class="voucher" data-form="voucher">
-                <span class="v-ico">${I.ticket}</span>
-                <input name="code" placeholder="Enter your voucher code" value="${state.voucher || ''}" autocomplete="off" />
-                <button aria-label="Apply voucher">${I.chevRight}</button>
-              </form>
-              ${state.voucher
-                ? `<p class="voucher-ok">${I.check} ${state.voucher} applied: ${VOUCHERS[state.voucher] * 100}% off</p>`
-                : '<p class="hint">Try <b>GOOD10</b> or <b>FOODIE20</b></p>'}
-              ${summaryRows(t)}
+              ${fulfilmentChips()}
+              <div id="quote"></div>
               <div class="cta">
-                <span class="cta-price">${money(t.total)}</span>
-                <a class="cta-btn" href="#/checkout">Checkout</a>
+                <span class="cta-price" id="cta-price"></span>
+                <button class="cta-btn" id="to-checkout" data-action="go-checkout" disabled>Checkout</button>
               </div>
             </aside>
           </div>
         </section>`;
     },
+    mount() { if (state.cart.length) showQuote('#to-checkout'); },
   });
 
-  A.action('inc', (el) => { state.cart[el.dataset.id]++; A.save(); A.refresh(); });
+  const cartChanged = () => { state.checkoutKey = null; A.save(); A.refresh(); };
+  A.action('inc', (el) => { const l = state.cart[el.dataset.i]; l.qty = Math.min(99, l.qty + 1); cartChanged(); });
   A.action('dec', (el) => {
-    const { id } = el.dataset;
-    if (--state.cart[id] <= 0) delete state.cart[id];
-    A.save(); A.refresh();
+    const i = Number(el.dataset.i);
+    if (--state.cart[i].qty <= 0) state.cart.splice(i, 1);
+    cartChanged();
   });
-  A.action('clear-cart', () => { state.cart = {}; state.voucher = null; A.save(); A.refresh(); });
-
-  A.form('voucher', (form) => {
-    const code = form.code.value.trim().toUpperCase();
-    if (VOUCHERS[code]) { state.voucher = code; A.toast('Voucher applied'); }
-    else { state.voucher = null; A.toast(code ? 'Invalid voucher code' : 'Voucher removed'); }
-    A.refresh();
-  });
+  A.action('clear-cart', () => { state.cart = []; cartChanged(); });
+  A.action('set-fulfilment', (el) => { state.fulfilment = el.dataset.value; cartChanged(); });
+  A.action('go-checkout', () => { location.hash = '#/checkout'; });
 
   /* ---------- Checkout ---------- */
-  function timeSlots() {
-    const slots = [];
-    const d = new Date();
-    d.setMinutes(d.getMinutes() < 30 ? 30 : 60, 0, 0);
-    d.setHours(d.getHours() + 1);
-    for (let i = 0; i < 6; i++) {
-      slots.push(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
-      d.setMinutes(d.getMinutes() + 30);
-    }
-    return slots;
-  }
-
   A.route('checkout', {
     tab: 'cart',
     render() {
       const head = A.header('Checkout');
-      if (!Object.keys(state.cart).length) {
+      if (!state.cart.length) {
         return `<section class="page panel">${head}${A.empty('🧾', 'Nothing to check out', 'Your cart is empty.', { href: '#/menu', label: 'Browse menu' })}</section>`;
       }
-      if (!state.user) {
-        return `<section class="page panel">${head}${A.empty('🔐', 'Sign in to continue', 'You need an account to place an order.', { href: '#/login/checkout', label: 'Sign in' })}</section>`;
+      if (!state.user?.otpToken) {
+        return `<section class="page panel">${head}${A.empty('🔐', 'Verify your mobile number', 'The restaurant needs a verified mobile number for cash orders.', { href: '#/login/checkout', label: 'Sign in' })}</section>`;
       }
-      const t = totals();
+      const delivery = state.fulfilment === 'DELIVERY';
       const addr = A.defaultAddress();
-      const slots = timeSlots();
-      const scheduled = state.schedule !== 'asap';
-      if (scheduled && !slots.includes(state.schedule)) state.schedule = slots[0];
+      const payLabel = delivery ? 'Cash on delivery' : 'Pay at the counter';
 
       return `
         <section class="page panel has-cta">
           ${head}
+          ${A.shopBanner()}
           <div class="split">
             <div class="stack">
               <section class="box">
-                <div class="box-head"><h2 class="h-sm">Delivery address</h2><a class="link strong" href="#/addresses">Change</a></div>
-                ${option({ action: 'noop', value: addr.id, selected: true, icon: A.ADDRESS_ICONS[addr.label] || I.pinO, title: esc(addr.label), sub: esc(addr.line + (addr.details ? ' · ' + addr.details : '')) })}
+                <div class="box-head"><h2 class="h-sm">How do you want it?</h2></div>
+                ${fulfilmentChips()}
               </section>
 
+              ${delivery ? `
               <section class="box">
-                <div class="box-head"><h2 class="h-sm">Delivery time</h2></div>
+                <div class="box-head"><h2 class="h-sm">Delivery address</h2><a class="link strong" href="#/addresses">${addr ? 'Change' : 'Add'}</a></div>
+                ${addr
+                  ? option({ action: 'go-addresses', value: addr.id, selected: true, icon: A.ADDRESS_ICONS[addr.label] || I.pinO, title: esc(addr.label), sub: esc(A.addressText(addr)) })
+                    + (addr.lat == null ? `<p class="err">This address has no map location. Open it and press “Use my current location”.</p>` : '')
+                  : `<a class="btn block ghost" href="#/addresses">Add a delivery address</a>`}
+              </section>` : `
+              <section class="box">
+                <div class="box-head"><h2 class="h-sm">Pickup from</h2></div>
+                <p><strong>${esc(A.shop.name)}</strong></p>
+              </section>`}
+
+              <section class="box">
+                <div class="box-head"><h2 class="h-sm">Payment</h2></div>
                 <div class="options">
-                  ${option({ action: 'set-schedule', value: 'asap', selected: !scheduled, icon: I.bike, title: 'Standard', sub: 'As soon as possible · 25–35 min' })}
-                  ${option({ action: 'set-schedule', value: slots[0], selected: scheduled, icon: I.calendar, title: 'Schedule', sub: 'Choose a delivery time' })}
-                </div>
-                ${scheduled ? `<div class="chips wrap slots">${slots.map((s) => `<button class="chip ${s === state.schedule ? 'active' : ''}" data-action="set-schedule" data-value="${s}">${s}</button>`).join('')}</div>` : ''}
-              </section>
-
-              <section class="box">
-                <div class="box-head"><h2 class="h-sm">Payment method</h2><a class="link strong" href="#/payments">Manage</a></div>
-                <div class="options">
-                  ${PAYMENT_METHODS.map((p) => option({ action: 'set-payment', value: p.id, selected: state.payment === p.id, icon: A.PAYMENT_ICONS[p.type], title: p.title, sub: p.sub })).join('')}
+                  ${option({ action: 'noop', value: 'cod', selected: true, icon: I.cash, title: payLabel, sub: delivery ? 'Pay the rider in cash' : 'Pay when you collect' })}
+                  <div class="option disabled"><span class="lr-ico">${I.card}</span><span class="grow"><strong>Online payment</strong><small class="muted">Coming soon</small></span></div>
                 </div>
               </section>
 
               <section class="box">
-                <div class="box-head"><h2 class="h-sm">Note for the courier</h2></div>
-                <textarea class="input" rows="3" data-input="note" placeholder="E.g. ring the bell, leave at the door…">${esc(state.note)}</textarea>
+                <div class="box-head"><h2 class="h-sm">Note for the restaurant</h2></div>
+                <textarea class="input" rows="3" maxlength="300" data-input="note" placeholder="E.g. less spicy, ring the bell…">${esc(state.note)}</textarea>
               </section>
+
+              <p class="muted small">Ordering as ${esc(state.user.name || '')} · ${esc(state.user.phone)} · <a class="link" href="#/profile">Change</a></p>
             </div>
 
             <aside class="summary">
               <h2 class="h-sm">Order summary</h2>
               <ul class="mini-list">
-                ${Object.entries(state.cart).map(([id, q]) => {
-                  const item = byId(id);
-                  return `<li><span><b>${q}×</b> ${esc(item.name)}</span><span>${money(item.price * q)}</span></li>`;
+                ${state.cart.map((l) => {
+                  const item = byId(l.itemId);
+                  const mods = A.modifierNames(l);
+                  return `<li><span><b>${l.qty}×</b> ${esc(item.name)}${mods.length ? ` <small class="muted">(${esc(mods.join(', '))})</small>` : ''}</span></li>`;
                 }).join('')}
               </ul>
-              ${summaryRows(t)}
+              <div id="quote"></div>
+              <p class="err" id="place-err"></p>
               <div class="cta">
-                <span class="cta-price">${money(t.total)}</span>
-                <button class="cta-btn" data-action="place-order">Place Order</button>
+                <span class="cta-price" id="cta-price"></span>
+                <button class="cta-btn" id="place" data-action="place-order" disabled>Place Order</button>
               </div>
             </aside>
           </div>
         </section>`;
     },
+    mount() { if (state.cart.length && state.user?.otpToken) showQuote('#place'); },
   });
 
-  A.action('set-schedule', (el) => { state.schedule = el.dataset.value === 'asap' ? 'asap' : el.dataset.value; A.refresh(); });
-  A.action('set-payment', (el) => { state.payment = el.dataset.value; A.save(); A.refresh(); });
   A.action('noop', () => {});
+  A.action('go-addresses', () => { location.hash = '#/addresses'; });
   A.input('note', (el) => { state.note = el.value; });
 
-  A.action('place-order', () => {
-    const t = totals();
-    const addr = A.defaultAddress();
-    const order = {
-      id: Math.floor(100000 + Math.random() * 900000),
-      date: Date.now(),
-      items: Object.entries(state.cart).map(([id, qty]) => ({ id: Number(id), qty })),
-      ...t,
-      voucher: state.voucher,
-      address: `${addr.label} · ${addr.line}`,
-      payment: A.paymentById(state.payment).title,
-      schedule: state.schedule,
-      note: state.note,
-    };
-    state.orders.unshift(order);
-    state.notifications.unshift({ id: Date.now(), title: `Order #${order.id} placed`, text: `We've sent your order to the restaurant. Total ${money(order.total)}.`, date: Date.now(), read: false });
-    state.cart = {}; state.voucher = null; state.note = ''; state.schedule = 'asap';
-    A.save();
-    location.hash = `#/success/${order.id}`;
+  let placing = false;
+  A.action('place-order', async (el) => {
+    if (placing) return;
+    const err = document.getElementById('place-err');
+    err.textContent = '';
+    placing = true; el.disabled = true; el.textContent = 'Placing…';
+    try {
+      const quote = await A.getQuote();
+      const addr = A.defaultAddress();
+      const delivery = state.fulfilment === 'DELIVERY';
+      const body = {
+        fulfilment: state.fulfilment,
+        payment: 'COD',
+        customer: { name: state.user.name || null, mobile: state.user.phone },
+        otpToken: state.user.otpToken,
+        lines: A.hubLines(),
+        note: state.note.trim() || null,
+        menuVersion: A.shop.menu.version,
+        expectedTotal: quote.total,
+        channel: 'website',
+        location: delivery ? { lat: addr.lat, lng: addr.lng } : null,
+        address: delivery ? { line1: addr.line1, line2: addr.line2 || null, landmark: addr.landmark || null, city: addr.city, pincode: addr.pincode } : null,
+      };
+      // the same key on a retry, so a network hiccup never creates two orders
+      state.checkoutKey ||= Hub.newKey();
+      const r = await Hub.placeOrder(body, state.checkoutKey);
+      state.orders = [{ id: r.order.id, token: r.accessToken, order: r.order }, ...state.orders.filter((o) => o.id !== r.order.id)];
+      A.notify(`Order ${r.order.number} placed`, `Sent to ${A.shop.name}. Total ${money(r.order.total)}, ${delivery ? 'cash on delivery' : 'pay at pickup'}.`);
+      state.cart = []; state.note = ''; state.checkoutKey = null;
+      placing = false;
+      A.clearQuote();
+      A.save();
+      location.hash = `#/success/${encodeURIComponent(r.order.id)}`;
+    } catch (e) {
+      placing = false; el.textContent = 'Place Order';
+      if (['PRICE_CHANGED', 'ITEM_UNAVAILABLE', 'OPTION_INVALID', 'VALIDATION', 'BELOW_MINIMUM', 'OUT_OF_AREA'].includes(e.code)) {
+        state.checkoutKey = null; // a changed order is a new order
+      }
+      if (e.code === 'OTP_REQUIRED') {
+        state.user = { ...state.user, otpToken: null }; A.save();
+        A.toast(e.message);
+        location.hash = '#/login/checkout';
+        return;
+      }
+      if (e.code === 'PRICE_CHANGED' || e.code === 'ITEM_UNAVAILABLE') {
+        // reload the menu and prices, then show the new total
+        try { A.setShop(await Hub.store()); } catch { /* keep the old one */ }
+        A.clearQuote(); A.refresh();
+        document.getElementById('place-err').textContent = e.message;
+        return;
+      }
+      err.textContent = e.message;
+      el.disabled = false;
+    }
   });
 })(App);

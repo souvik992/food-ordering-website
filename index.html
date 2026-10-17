@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#F2600C" />
-  <title>Foodie — Food Delivery</title>
+  <title>Order online</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -13,7 +13,7 @@
 <body>
   <!-- Navigation: bottom tab bar on mobile, left sidebar on desktop -->
   <nav class="tabbar" id="tabbar" aria-label="Main">
-    <a class="brand" href="#/"><span class="brand-dot"></span>Foodie</a>
+    <a class="brand" href="#/"><span class="brand-dot"></span><span id="brand-name">Order online</span></a>
     <a href="#/" data-tab="home"></a>
     <a href="#/menu" data-tab="menu"></a>
     <a href="#/cart" data-tab="cart"></a>
@@ -25,7 +25,9 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="js/config.js"></script>
   <script src="js/data.js"></script>
+  <script src="js/hub.js"></script>
   <script src="js/core.js"></script>
   <script src="js/pages/home.js"></script>
   <script src="js/pages/menu.js"></script>

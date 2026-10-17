@@ -1,6 +1,7 @@
 // Shared state, helpers, icons and UI components used by every page.
 window.App = (function () {
   'use strict';
+  const A = {};
 
   /* ---------- Persistence ---------- */
   const store = {
@@ -12,67 +13,132 @@ window.App = (function () {
     },
   };
 
-  const DEFAULT_ADDRESSES = [
-    { id: 1, label: 'Home', line: 'Al Safa Street, Al Wasl', details: 'Villa 12', isDefault: true },
-    { id: 2, label: 'Work', line: 'Business Bay, Tower 2', details: 'Floor 18, Office 1804', isDefault: false },
-  ];
-
-  const DEFAULT_NOTIFICATIONS = [
-    { id: 1, title: 'Welcome to Foodie 🎉', text: 'Use code GOOD10 for 10% off your next order.', date: Date.now() - 864e5, read: false },
-    { id: 2, title: 'Weekend deal', text: 'FOODIE20 gives you 20% off everything this weekend.', date: Date.now() - 3 * 864e5, read: false },
-  ];
+  // Keys are prefixed per store, so one browser can order from two stores without mixing carts.
+  const key = (k) => `tf_${Hub.slug}_${k}`;
+  const list = (v) => (Array.isArray(v) ? v : []);
 
   const state = {
-    cart: store.get('fd_cart', {}), // { itemId: qty }
-    favs: new Set(store.get('fd_favs', [])),
-    orders: store.get('fd_orders', []),
-    user: store.get('fd_user', null),
-    addresses: store.get('fd_addresses', DEFAULT_ADDRESSES),
-    payment: store.get('fd_payment', 'card'),
-    notifications: store.get('fd_notifications', DEFAULT_NOTIFICATIONS),
-    recent: store.get('fd_recent', []),
-    voucher: null,
-    menu: { query: '', cat: 'all', sort: 'popular' },
-    schedule: 'asap',
+    // cart lines: { key, itemId, modifierIds: [], qty }
+    cart: list(store.get(key('cart'), [])),
+    favs: new Set(list(store.get(key('favs'), []))),
+    // orders placed from this browser: { id, token, order } (order = latest copy from the hub)
+    orders: list(store.get(key('orders'), [])),
+    // signed-in customer: { name, phone, otpToken } (otpToken from the hub, valid 30 days)
+    user: store.get(key('user'), null),
+    // { id, label, line1, line2, landmark, city, pincode, lat, lng, isDefault }
+    addresses: list(store.get(key('addresses'), [])),
+    fulfilment: store.get(key('fulfilment'), 'DELIVERY'),
+    notifications: list(store.get(key('notifications'), [])),
+    recent: list(store.get(key('recent'), [])),
+    menu: { query: '', cat: 'all', sort: 'menu' },
     note: '',
-    qty: 1,
     ordersTab: 'active',
     focusSearch: false,
+    checkoutKey: null, // idempotency key of the order being placed (a retry reuses it, so no double orders)
   };
 
   function save() {
-    store.set('fd_cart', state.cart);
-    store.set('fd_favs', [...state.favs]);
-    store.set('fd_orders', state.orders);
-    store.set('fd_user', state.user);
-    store.set('fd_addresses', state.addresses);
-    store.set('fd_payment', state.payment);
-    store.set('fd_notifications', state.notifications);
-    store.set('fd_recent', state.recent);
+    store.set(key('cart'), state.cart);
+    store.set(key('favs'), [...state.favs]);
+    store.set(key('orders'), state.orders.slice(0, 50));
+    store.set(key('user'), state.user);
+    store.set(key('addresses'), state.addresses);
+    store.set(key('fulfilment'), state.fulfilment);
+    store.set(key('notifications'), state.notifications.slice(0, 50));
+    store.set(key('recent'), state.recent);
   }
 
   /* ---------- Helpers ---------- */
-  const money = (n) => '$' + n.toFixed(2);
-  const byId = (id) => ITEMS.find((i) => i.id === Number(id));
-  const cartCount = () => Object.values(state.cart).reduce((a, b) => a + b, 0);
-  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const fmtReviews = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + 'k' : n);
+  // Amounts from the hub are in paise; this only formats them
+  const money = (p) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const byId = (id) => ITEMS.find((i) => i.id === String(id));
+  const cartCount = () => state.cart.reduce((a, l) => a + l.qty, 0);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const fmtDate = (t) => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-  const defaultAddress = () => state.addresses.find((a) => a.isDefault) || state.addresses[0];
-  const paymentById = (id) => PAYMENT_METHODS.find((p) => p.id === id) || PAYMENT_METHODS[0];
+  const defaultAddress = () => state.addresses.find((a) => a.isDefault) || state.addresses[0] || null;
+  const addressText = (a) => [a.line1, a.line2, a.landmark, a.city, a.pincode].filter(Boolean).join(', ');
   const unreadCount = () => state.notifications.filter((n) => !n.read).length;
+  const notify = (title, text) => { state.notifications.unshift({ id: Date.now() + Math.random(), title, text, date: Date.now(), read: false }); };
 
-  // Image with an emoji fallback if the photo fails to load
-  const media = (item, cls = '', w) =>
+  // Photo if one is set in js/config.js, otherwise the emoji
+  const media = (item, cls = '') =>
     `<div class="media ${cls}" data-emoji="${item.emoji}">
-       <img src="${w ? item.image.replace('w=700', 'w=' + w) : item.image}" alt="${esc(item.name)}" loading="lazy" onerror="this.remove()">
+       ${item.image ? `<img src="${esc(item.image)}" alt="${esc(item.name)}" loading="lazy" onerror="this.remove()">` : ''}
      </div>`;
+  const vegMark = (item) => (item.isVeg == null ? '' : `<span class="veg ${item.isVeg ? '' : 'non'}" title="${item.isVeg ? 'Veg' : 'Non-veg'}" aria-label="${item.isVeg ? 'Veg' : 'Non-veg'}"></span>`);
 
-  function totals() {
-    const subtotal = Object.entries(state.cart).reduce((sum, [id, q]) => sum + byId(id).price * q, 0);
-    const discount = state.voucher ? subtotal * VOUCHERS[state.voucher] : 0;
-    const fee = subtotal > 0 ? DELIVERY_FEE : 0;
-    return { subtotal, discount, fee, total: subtotal - discount + fee };
+  /* ---------- Menu from the hub ---------- */
+  const emojiFor = (...names) => (EMOJI_RULES.find(([re]) => names.some((n) => re.test(n || ''))) || [, '🍽️'])[1];
+
+  // shop = GET /v1/stores/<slug>: name, open, reason, menu, fulfilment, payments, delivery, pickup, hours
+  function setShop(shop) {
+    A.shop = shop;
+    const cats = shop.menu ? [...shop.menu.categories].sort((a, b) => a.sort - b.sort) : [];
+    const catName = new Map(cats.map((c) => [c.id, c.name]));
+    window.CATEGORIES = [{ id: 'all', name: 'All', emoji: '🍽️' }]
+      .concat(cats.filter((c) => shop.menu.items.some((i) => i.categoryId === c.id)).map((c) => ({ id: c.id, name: c.name, emoji: emojiFor(c.name) })));
+    const order = new Map(cats.map((c, i) => [c.id, i]));
+    window.ITEMS = (shop.menu?.items || []).map((i, n) => ({
+      ...i,
+      category: catName.get(i.categoryId) || 'More',
+      emoji: emojiFor(i.name, catName.get(i.categoryId)),
+      image: ITEM_PHOTOS[i.id] || null,
+      sort: (order.get(i.categoryId) ?? 999) * 10000 + n,
+    }));
+    // drop cart lines for items that left the menu
+    const before = state.cart.length;
+    state.cart = state.cart.filter((l) => byId(l.itemId));
+    if (state.cart.length !== before) { save(); toast('Some items are no longer available and were removed from your cart'); }
+    // choose a fulfilment the store offers
+    const f = shop.fulfilment || {};
+    if (state.fulfilment === 'DELIVERY' && !f.delivery && f.pickup) state.fulfilment = 'PICKUP';
+    if (state.fulfilment === 'PICKUP' && !f.pickup && f.delivery) state.fulfilment = 'DELIVERY';
+  }
+
+  const modifierGroups = (item) => item.modifierGroupIds.map((id) => A.shop.menu.modifierGroups.find((g) => g.id === id)).filter(Boolean);
+  const modifierNames = (line) => {
+    const all = A.shop?.menu?.modifierGroups.flatMap((g) => g.modifiers) || [];
+    return line.modifierIds.map((id) => all.find((m) => m.id === id)?.name).filter(Boolean);
+  };
+
+  function addToCart(itemId, qty = 1, modifierIds = []) {
+    const mods = [...modifierIds].sort();
+    const k = `${itemId}|${mods.join(',')}`;
+    const line = state.cart.find((l) => l.key === k);
+    if (line) line.qty = Math.min(99, line.qty + qty);
+    else state.cart.push({ key: k, itemId: String(itemId), modifierIds: mods, qty });
+    state.checkoutKey = null;
+    save();
+  }
+
+  // Lines in the shape the hub expects
+  const hubLines = () => state.cart.map((l) => ({ itemId: l.itemId, qtyMilli: l.qty * 1000, modifierIds: l.modifierIds }));
+
+  /* ---------- Totals: always a quote from the hub ---------- */
+  let quoteCache = { key: '', promise: null };
+  function quoteRequest() {
+    const addr = defaultAddress();
+    const delivery = state.fulfilment === 'DELIVERY';
+    return { fulfilment: state.fulfilment, location: delivery && addr && addr.lat != null ? { lat: addr.lat, lng: addr.lng } : null, lines: hubLines() };
+  }
+  function getQuote() {
+    const req = quoteRequest();
+    if (req.fulfilment === 'DELIVERY' && !req.location) return Promise.reject(Object.assign(new Error('Add a delivery address with its location to see the delivery fee.'), { code: 'NO_LOCATION' }));
+    const k = JSON.stringify(req);
+    if (quoteCache.key !== k) quoteCache = { key: k, promise: Hub.quote(req).catch((e) => { quoteCache = { key: '', promise: null }; throw e; }) };
+    return quoteCache.promise;
+  }
+  const clearQuote = () => { quoteCache = { key: '', promise: null }; };
+
+  function summaryRows(q) {
+    return `
+      <dl class="totals">
+        <div><dt>Items</dt><dd>${money(q.itemsTotal)}</dd></div>
+        ${q.deliveryFee ? `<div><dt>Delivery fee${q.distanceKm != null ? ` (${q.distanceKm} km)` : ''}</dt><dd>${money(q.deliveryFee)}</dd></div>` : ''}
+        ${q.packagingFee ? `<div><dt>Packaging</dt><dd>${money(q.packagingFee)}</dd></div>` : ''}
+        <div class="total"><dt>Total</dt><dd>${money(q.total)}</dd></div>
+      </dl>
+      <p class="muted small">Prices include GST.${q.etaMinutes ? ` Ready in about ${q.etaMinutes} min after the restaurant accepts.` : ''}</p>`;
   }
 
   const $toast = document.getElementById('toast');
@@ -80,19 +146,33 @@ window.App = (function () {
     $toast.textContent = msg;
     $toast.classList.add('show');
     clearTimeout(toast.t);
-    toast.t = setTimeout(() => $toast.classList.remove('show'), 1800);
+    toast.t = setTimeout(() => $toast.classList.remove('show'), 2600);
   }
 
-  /* ---------- Order status (simulated from time since order) ---------- */
-  const STEPS = [
-    { title: 'Order confirmed', sub: 'The restaurant has received your order' },
-    { title: 'Preparing your food', sub: 'Your meal is being freshly made' },
-    { title: 'On the way', sub: 'Your courier is heading to you' },
-    { title: 'Delivered', sub: 'Enjoy your meal!' },
-  ];
-  function orderStep(order) {
-    const s = (Date.now() - order.date) / 1000;
-    return s < 30 ? 0 : s < 90 ? 1 : s < 240 ? 2 : 3;
+  /* ---------- Orders (status comes from the hub) ---------- */
+  const isActive = (o) => !FINAL_STATES.includes(o.order.state);
+  // Stores the latest copy of an order; tells the customer when its status changes
+  function updateOrder(order) {
+    const rec = state.orders.find((r) => r.id === order.id);
+    if (!rec) return false;
+    const changed = rec.order.state !== order.state || JSON.stringify(rec.order) !== JSON.stringify(order);
+    if (rec.order.state !== order.state) notify(`Order ${order.number}: ${STATUS[order.state]}`, statusText(order));
+    rec.order = order;
+    if (changed) save();
+    return changed;
+  }
+  function statusText(o) {
+    switch (o.state) {
+      case 'SENT_TO_STORE': case 'RECEIVED': return 'Waiting for the restaurant to accept your order.';
+      case 'ACCEPTED': case 'PREPARING': return o.etaAt ? `Your food will be ready at about ${new Date(o.etaAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : 'The restaurant is preparing your order.';
+      case 'READY': return o.fulfilment === 'PICKUP' ? 'Your order is ready to collect.' : 'Your order is ready and will leave soon.';
+      case 'OUT_FOR_DELIVERY': return o.rider ? `${o.rider.name} is on the way.` : 'Your order is on the way.';
+      case 'DELIVERED': return 'Delivered. Enjoy your meal!';
+      case 'PICKED_UP': return 'Collected. Enjoy your meal!';
+      case 'REJECTED': case 'AUTO_REJECTED': return `Sorry, the restaurant could not take this order.${o.reasonText ? ' ' + o.reasonText : ''}`;
+      case 'CANCELLED': return `This order was cancelled.${o.reasonText ? ' ' + o.reasonText : ''}`;
+      default: return STATUS[o.state] || o.state;
+    }
   }
 
   /* ---------- Icons ---------- */
@@ -169,21 +249,23 @@ window.App = (function () {
       </div>`;
   }
 
+  // Items with options open their page instead of going straight into the cart
+  const addAttrs = (item) => (item.modifierGroupIds.length ? `data-action="choose" data-id="${esc(item.id)}"` : `data-action="add" data-id="${esc(item.id)}"`);
+
   // Large photo card (home, favourites)
   function cardHTML(item) {
     const fav = state.favs.has(item.id);
     return `
       <article class="card">
-        <a class="card-link" href="#/item/${item.id}" aria-label="${esc(item.name)}"></a>
+        <a class="card-link" href="#/item/${encodeURIComponent(item.id)}" aria-label="${esc(item.name)}"></a>
         ${media(item, 'card-img')}
-        <span class="chip-rating">${item.rating} (${fmtReviews(item.reviews)})</span>
-        <button class="icon-btn fav ${fav ? 'on' : ''}" data-action="fav" data-id="${item.id}" aria-label="Favourite">${I.heart}</button>
+        <button class="icon-btn fav ${fav ? 'on' : ''}" data-action="fav" data-id="${esc(item.id)}" aria-label="Favourite">${I.heart}</button>
         <div class="card-body">
           <div>
-            <h3>${esc(item.name)}</h3>
-            <p class="meta">${I.clock}${item.time} min · ${money(item.price)} · ${esc(item.by)}</p>
+            <h3>${vegMark(item)}${esc(item.name)}</h3>
+            <p class="meta">${money(item.price)} · ${esc(item.category)}${item.modifierGroupIds.length ? ' · options' : ''}</p>
           </div>
-          <button class="round-btn" data-action="add" data-id="${item.id}" aria-label="Add ${esc(item.name)} to cart">${I.arrow}</button>
+          <button class="round-btn" ${addAttrs(item)} aria-label="Add ${esc(item.name)} to cart">${I.arrow}</button>
         </div>
       </article>`;
   }
@@ -192,20 +274,22 @@ window.App = (function () {
   function rowHTML(item) {
     return `
       <article class="row-card">
-        <a class="card-link" href="#/item/${item.id}" aria-label="${esc(item.name)}"></a>
-        ${media(item, 'thumb', 300)}
+        <a class="card-link" href="#/item/${encodeURIComponent(item.id)}" aria-label="${esc(item.name)}"></a>
+        ${media(item, 'thumb')}
         <div class="grow">
           <div class="ci-top">
-            <div><h3>${esc(item.name)}</h3><p class="muted">By ${esc(item.by)}</p></div>
-            <span class="rating">${I.star}${item.rating}</span>
+            <div><h3>${vegMark(item)}${esc(item.name)}</h3><p class="muted">${esc(item.category)}</p></div>
           </div>
           <div class="ci-bottom">
-            <div><strong>${money(item.price)}</strong> <small class="muted">· ${item.time} min</small></div>
-            <button class="add-btn" data-action="add" data-id="${item.id}" aria-label="Add ${esc(item.name)} to cart">${I.plus}</button>
+            <div><strong>${money(item.price)}</strong>${item.modifierGroupIds.length ? ' <small class="muted">· options</small>' : ''}</div>
+            <button class="add-btn" ${addAttrs(item)} aria-label="Add ${esc(item.name)} to cart">${I.plus}</button>
           </div>
         </div>
       </article>`;
   }
+
+  // Banner when the restaurant is not taking orders
+  const shopBanner = () => (A.shop && !A.shop.open ? `<div class="banner">${I.clock}<span>${esc(A.shop.reason || 'The restaurant is not taking online orders right now.')}</span></div>` : '');
 
   // Settings-style list row
   function listRow({ href, action, icon, title, sub, right = '', danger = false, attrs = '' }) {
@@ -238,14 +322,17 @@ window.App = (function () {
   const forms = {};
   const inputs = {};
 
-  return {
-    store, state, save, money, byId, cartCount, esc, fmtReviews, fmtDate, media, totals, toast,
-    defaultAddress, paymentById, unreadCount, STEPS, orderStep, I, PAYMENT_ICONS, ADDRESS_ICONS,
-    header, cartButton, empty, cardHTML, rowHTML, listRow, option,
+  Object.assign(A, {
+    store, state, save, money, byId, cartCount, esc, fmtDate, media, vegMark, toast, notify,
+    defaultAddress, addressText, unreadCount, I, PAYMENT_ICONS, ADDRESS_ICONS,
+    setShop, modifierGroups, modifierNames, addToCart, hubLines, getQuote, clearQuote, summaryRows,
+    isActive, updateOrder, statusText,
+    header, cartButton, empty, cardHTML, rowHTML, listRow, option, shopBanner,
     routes, actions, forms, inputs,
     route: (name, def) => { routes[name] = def; },
     action: (name, fn) => { actions[name] = fn; },
     form: (name, fn) => { forms[name] = fn; },
     input: (name, fn) => { inputs[name] = fn; },
-  };
+  });
+  return A;
 })();

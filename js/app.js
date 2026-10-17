@@ -1,16 +1,10 @@
-// Router, navigation chrome and global event delegation
+// Router, navigation chrome, global event delegation, and loading the menu from the order hub
 (function (A) {
   'use strict';
 
   const { I, state } = A;
   const $app = document.getElementById('app');
   const $tabbar = document.getElementById('tabbar');
-
-  // Older saved orders may miss newer fields
-  state.orders.forEach((o) => {
-    o.subtotal ??= o.total; o.fee ??= 0; o.discount ??= 0;
-    o.address ??= '—'; o.payment ??= '—'; o.schedule ??= 'asap';
-  });
 
   /* ---------- Tab bar / sidebar ---------- */
   const TABS = {
@@ -34,8 +28,11 @@
   /* ---------- Router ---------- */
   let current = null;
   let timer = null;
+  let cleanup = null;
   let navCount = 0;
   A.setTimer = (fn, ms) => { clearInterval(timer); timer = setInterval(fn, ms); };
+  // A page can register something to stop when it is left (e.g. a live status stream)
+  A.onLeave = (fn) => { cleanup = fn; };
 
   const notFound = {
     render: () => `<section class="page panel">${A.header('Not found')}${A.empty('🤷', 'Page not found', 'The page you’re looking for doesn’t exist.', { href: '#/', label: 'Go home' })}</section>`,
@@ -43,7 +40,9 @@
 
   A.render = () => {
     clearInterval(timer);
-    const [, name = '', param] = (location.hash.slice(1) || '/').split('/');
+    if (cleanup) { cleanup(); cleanup = null; }
+    const [, name = '', ...rest] = (location.hash.slice(1) || '/').split('/');
+    const param = rest.length ? decodeURIComponent(rest.join('/')) : undefined;
     let route = A.routes[name];
     let html = route ? route.render(param) : null;
     if (html == null) { route = notFound; html = notFound.render(); }
@@ -62,8 +61,6 @@
     window.scrollTo(0, y);
   };
 
-  window.addEventListener('hashchange', () => { navCount++; A.render(); window.scrollTo(0, 0); });
-
   /* ---------- Global actions ---------- */
   A.action('back', () => (navCount > 0 ? history.back() : (location.hash = '#/')));
   A.action('toast', (el) => A.toast(el.dataset.msg));
@@ -71,20 +68,24 @@
   A.action('add', (el, e) => {
     e.preventDefault();
     const { id } = el.dataset;
-    state.cart[id] = (state.cart[id] || 0) + 1;
-    A.save(); A.updateChrome();
+    A.addToCart(id, 1);
+    A.updateChrome();
     A.toast(`${A.byId(id).name} added to cart`);
     el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+  });
+  A.action('choose', (el, e) => {
+    e.preventDefault();
+    location.hash = `#/item/${encodeURIComponent(el.dataset.id)}`;
   });
 
   A.action('fav', (el, e) => {
     e.preventDefault();
-    const id = Number(el.dataset.id);
+    const { id } = el.dataset;
     state.favs.has(id) ? state.favs.delete(id) : state.favs.add(id);
     A.save();
     A.toast(state.favs.has(id) ? 'Saved to favourites' : 'Removed from favourites');
     if (current === 'favourites') A.refresh();
-    else document.querySelectorAll(`[data-action="fav"][data-id="${id}"]`).forEach((b) => b.classList.toggle('on', state.favs.has(id)));
+    else document.querySelectorAll('[data-action="fav"]').forEach((b) => { if (b.dataset.id === id) b.classList.toggle('on', state.favs.has(id)); });
   });
 
   /* ---------- Event delegation ---------- */
@@ -110,5 +111,39 @@
     if (name && A.inputs[name]) A.inputs[name](e.target, e);
   });
 
-  A.render();
+  /* ---------- Start: load the store and its menu from the hub ---------- */
+  function showLoadError(err) {
+    document.body.classList.add('no-tabbar');
+    $app.innerHTML = `<section class="page panel">${A.empty('📡', 'Could not load the menu', A.esc(err.message), null)}
+      <div class="center"><button class="btn" data-action="reload">Try again</button></div></section>`;
+  }
+  A.action('reload', () => location.reload());
+
+  async function start() {
+    $app.innerHTML = `<section class="page panel">${A.empty('⏳', 'Loading the menu…', '', null)}</section>`;
+    try {
+      A.setShop(await Hub.store());
+    } catch (err) {
+      showLoadError(err);
+      return;
+    }
+    document.title = A.shop.name;
+    document.getElementById('brand-name').textContent = A.shop.name;
+    window.addEventListener('hashchange', () => { navCount++; A.render(); window.scrollTo(0, 0); });
+    A.render();
+    // Keep "open / closed" and the menu current without disturbing the page being used
+    setInterval(async () => {
+      try {
+        const wasOpen = A.shop.open, version = A.shop.menu?.version;
+        A.setShop(await Hub.store());
+        A.clearQuote();
+        if (wasOpen !== A.shop.open || version !== A.shop.menu?.version) {
+          if (['', 'menu', 'cart'].includes(current)) A.refresh();
+        }
+        A.updateChrome();
+      } catch { /* try again next time */ }
+    }, 60_000);
+  }
+
+  start();
 })(App);

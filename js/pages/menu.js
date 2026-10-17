@@ -3,20 +3,19 @@
   const { I, state, esc, rowHTML } = A;
 
   const SORTS = {
-    popular: ['Most popular', (a, b) => b.reviews - a.reviews],
-    rating: ['Top rated', (a, b) => b.rating - a.rating],
-    fastest: ['Fastest delivery', (a, b) => a.time - b.time],
+    menu: ['Menu order', (a, b) => a.sort - b.sort],
     'price-asc': ['Price: low to high', (a, b) => a.price - b.price],
     'price-desc': ['Price: high to low', (a, b) => b.price - a.price],
+    name: ['Name', (a, b) => a.name.localeCompare(b.name)],
   };
 
   function results() {
     const { query, cat, sort } = state.menu;
     const q = query.trim().toLowerCase();
     return ITEMS
-      .filter((i) => (cat === 'all' || i.category === cat) &&
-        (!q || [i.name, i.by, i.category].some((s) => s.toLowerCase().includes(q))))
-      .sort(SORTS[sort][1]);
+      .filter((i) => (cat === 'all' || i.categoryId === cat) &&
+        (!q || [i.name, i.category].some((s) => s.toLowerCase().includes(q))))
+      .sort((SORTS[sort] || SORTS.menu)[1]);
   }
 
   function renderResults() {
@@ -32,7 +31,7 @@
 
     document.getElementById('menu-results').innerHTML = list.length
       ? list.map(rowHTML).join('')
-      : `<div class="empty"><span>🔍</span><p>No dishes match “${esc(query)}”. Try another search.</p></div>`;
+      : `<div class="empty"><span>🔍</span><p>${query ? `No dishes match “${esc(query)}”. Try another search.` : 'No dishes here yet.'}</p></div>`;
   }
 
   A.route('menu', {
@@ -40,15 +39,17 @@
     tabbar: true,
     render() {
       const { query, sort } = state.menu;
+      if (!CATEGORIES.some((c) => c.id === state.menu.cat)) state.menu.cat = 'all';
       return `
         <section class="page panel menu">
           ${A.header('Menu', { back: false, right: A.cartButton() })}
+          ${A.shopBanner()}
           <label class="search solo">
             ${I.search}
-            <input id="menu-q" type="search" data-input="menu-q" data-change="menu-q-commit" placeholder="Search dishes or restaurants" value="${esc(query)}" autocomplete="off" enterkeyhint="search" />
+            <input id="menu-q" type="search" data-input="menu-q" data-change="menu-q-commit" placeholder="Search the menu" value="${esc(query)}" autocomplete="off" enterkeyhint="search" />
           </label>
           <div class="chips" id="menu-cats">
-            ${CATEGORIES.map((c) => `<button class="chip" data-action="menu-cat" data-cat="${c.id}">${c.emoji} ${c.name}</button>`).join('')}
+            ${CATEGORIES.map((c) => `<button class="chip" data-action="menu-cat" data-cat="${esc(c.id)}">${c.emoji} ${esc(c.name)}</button>`).join('')}
           </div>
           <div class="toolbar">
             <span class="muted" id="menu-count"></span>

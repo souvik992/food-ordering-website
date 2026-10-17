@@ -605,3 +605,28 @@ textarea.input { resize: vertical; min-height: 84px; }
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
 }
+
+/* ---------- Tiffin order hub ---------- */
+.banner { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 16px; padding: 12px 14px; border-radius: var(--radius-sm); background: #fdecea; color: #8a1c14; font-size: 0.88rem; }
+.banner svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
+.err { color: var(--red); font-size: 0.85rem; }
+.err:empty { display: none; }
+.small { font-size: 0.78rem; }
+.veg { display: inline-block; width: 12px; height: 12px; border: 1.5px solid var(--green); border-radius: 3px; margin-right: 6px; vertical-align: -1px; position: relative; flex: none; }
+.veg::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--green); }
+.veg.non { border-color: #b3261e; }
+.veg.non::after { background: #b3261e; }
+.price { font-size: 1.15rem; font-weight: 600; white-space: nowrap; }
+.option.disabled { opacity: 0.55; }
+.pill.bad { background: #fdecea; color: #b3261e; }
+.eta-card.bad { background: #6b6b73; }
+.seg button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.seg svg { width: 16px; height: 16px; }
+.mod-group { margin-top: 22px; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.loc-pick { display: grid; gap: 8px; }
+.loc-pick summary { cursor: pointer; font-size: 0.82rem; }
+.loc-pick details[open] summary { margin-bottom: 10px; }
+.btn svg { width: 18px; height: 18px; }
+.btn:disabled, .cta-btn:disabled { opacity: 0.5; pointer-events: none; }
+.bar .mono { white-space: nowrap; }

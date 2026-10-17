@@ -1,88 +1,31 @@
-// Demo menu data. Swap this for an API call when you add a backend.
-const img = (id, w = 700) =>
-  `https://images.unsplash.com/photo-${id}?auto=format&fit=crop&w=${w}&q=70`;
+// Static content. The menu itself (CATEGORIES, ITEMS) is loaded from the order hub when the site starts (js/app.js).
+window.CATEGORIES = [];
+window.ITEMS = [];
 
-window.CATEGORIES = [
-  { id: 'all', name: 'All', emoji: '🍽️' },
-  { id: 'food', name: 'Food', emoji: '🍔' },
-  { id: 'grocery', name: 'Grocery', emoji: '🥬' },
-  { id: 'drinks', name: 'Drinks', emoji: '🥤' },
-  { id: 'desserts', name: 'Desserts', emoji: '🍰' },
-  { id: 'stores', name: 'Stores', emoji: '🛒' },
+// Emoji shown for items without a photo, picked from the item or category name
+window.EMOJI_RULES = [
+  [/burger/i, '🍔'], [/pizza/i, '🍕'], [/biryani|rice|pulao|thali|meal/i, '🍛'], [/dosa|idli|uttapam|vada/i, '🥞'],
+  [/roll|wrap|kathi|frankie/i, '🌯'], [/sandwich|toast/i, '🥪'], [/noodle|chowmein|pasta/i, '🍜'], [/momo|dumpling/i, '🥟'],
+  [/fries|chips/i, '🍟'], [/chicken|tandoor|kebab|tikka/i, '🍗'], [/paneer|curry|dal|sabzi/i, '🍲'], [/roti|naan|paratha|bread/i, '🫓'],
+  [/salad/i, '🥗'], [/chai|tea/i, '🍵'], [/coffee/i, '☕'], [/lassi|shake|smoothie/i, '🥤'], [/juice/i, '🧃'],
+  [/drink|beverage|cola|soda|water/i, '🥤'], [/ice ?cream|kulfi/i, '🍨'], [/cake|pastry|brownie/i, '🍰'],
+  [/sweet|dessert|gulab|halwa|jalebi|kheer/i, '🍮'], [/snack|starter|samosa|pakora/i, '🥟'],
 ];
 
-window.ITEMS = [
-  {
-    id: 1, name: 'Street Tacos', by: 'Taco Fiesta', category: 'food',
-    price: 7.0, rating: 4.7, reviews: 2300, time: 25, type: 'Bike', emoji: '🌮',
-    image: img('1551504734-5ee1c4a1479b'),
-    description: 'Soft flour tortillas loaded with grilled beef, crisp lettuce, red onion, peppers and our house salsa. Fresh, bold and made to order every single time.',
-  },
-  {
-    id: 2, name: 'Smash Burger', by: 'Burger Barn', category: 'food',
-    price: 15.0, rating: 4.7, reviews: 1840, time: 30, type: 'Bike', emoji: '🍔',
-    image: img('1568901346375-23c9450c58cd'),
-    description: 'Two smashed beef patties, melted cheddar, pickles, caramelised onions and secret sauce on a toasted brioche bun. Served with crispy fries.',
-  },
-  {
-    id: 3, name: 'Salmon Sushi Rolls', by: 'Sushi Zen', category: 'food',
-    price: 12.5, rating: 4.8, reviews: 960, time: 35, type: 'Car', emoji: '🍣',
-    image: img('1579871494447-9811cf80d66c'),
-    description: 'Eight pieces of hand-rolled sushi with fresh salmon, avocado and cucumber. Comes with soy sauce, wasabi and pickled ginger.',
-  },
-  {
-    id: 4, name: 'Margherita Pizza', by: "Nonna's Oven", category: 'food',
-    price: 11.0, rating: 4.6, reviews: 3120, time: 28, type: 'Bike', emoji: '🍕',
-    image: img('1565299624946-b28f40a0ae38'),
-    description: 'Wood-fired thin crust topped with San Marzano tomatoes, fresh mozzarella, basil and a drizzle of extra-virgin olive oil.',
-  },
-  {
-    id: 5, name: 'Green Power Bowl', by: 'Leaf & Co', category: 'food',
-    price: 9.0, rating: 4.5, reviews: 640, time: 20, type: 'Bike', emoji: '🥗',
-    image: img('1512621776951-a57141f2eefd'),
-    description: 'Quinoa, avocado, chickpeas, cherry tomatoes, cucumber and leafy greens with a zesty lemon-tahini dressing.',
-  },
-  {
-    id: 6, name: 'Fresh Strawberries', by: 'Green Market', category: 'grocery',
-    price: 3.5, rating: 4.8, reviews: 410, time: 15, type: 'Bike', emoji: '🍓',
-    image: img('1464965911861-746a04b4bca6'),
-    description: 'A 500g punnet of sweet, juicy strawberries picked this morning from local farms. Perfect for snacking, smoothies or desserts.',
-  },
-  {
-    id: 7, name: 'Iced Latte', by: 'Bean There', category: 'drinks',
-    price: 4.2, rating: 4.6, reviews: 780, time: 12, type: 'Bike', emoji: '🧋',
-    image: img('1461023058943-07fcbe16d735'),
-    description: 'Double-shot espresso poured over ice and cold milk. Add a pump of vanilla or caramel at checkout.',
-  },
-  {
-    id: 8, name: 'Berry Pancakes', by: 'Morning Stack', category: 'desserts',
-    price: 8.5, rating: 4.9, reviews: 1290, time: 22, type: 'Bike', emoji: '🥞',
-    image: img('1567620905732-2d1ec7ab7445'),
-    description: 'Three fluffy buttermilk pancakes topped with fresh berries, whipped butter and warm maple syrup.',
-  },
-  {
-    id: 9, name: 'Weekly Essentials Box', by: 'FreshMart', category: 'stores',
-    price: 24.0, rating: 4.4, reviews: 220, time: 40, type: 'Van', emoji: '🛒',
-    image: img('1542838132-92c53300491e'),
-    description: 'Milk, eggs, bread, seasonal fruit and vegetables: everything you need for the week, delivered to your door in one box.',
-  },
-];
-
-window.COURIER = { name: 'Mitchel Santnar', id: '13256626' };
-window.DELIVERY_FEE = 2.0;
-window.VOUCHERS = { GOOD10: 0.1, FOODIE20: 0.2 }; // code -> discount
-
-// Demo payment options: no real payments are processed.
-window.PAYMENT_METHODS = [
-  { id: 'card', type: 'card', title: 'Visa •••• 4242', sub: 'Expires 08/28' },
-  { id: 'wallet', type: 'wallet', title: 'Foodie Wallet', sub: 'Balance $35.00' },
-  { id: 'cash', type: 'cash', title: 'Cash on Delivery', sub: 'Pay when your order arrives' },
-];
+window.STATUS = {
+  PLACED: 'Placed', PAYMENT_PENDING: 'Waiting for payment', PAYMENT_FAILED: 'Payment failed',
+  SENT_TO_STORE: 'Sent to the restaurant', RECEIVED: 'Received by the restaurant', ACCEPTED: 'Accepted',
+  PREPARING: 'Being prepared', READY: 'Ready', OUT_FOR_DELIVERY: 'Out for delivery', DELIVERED: 'Delivered',
+  PICKED_UP: 'Collected', REJECTED: 'Not accepted', AUTO_REJECTED: 'Not accepted in time', CANCELLED: 'Cancelled',
+};
+window.FINAL_STATES = ['REJECTED', 'AUTO_REJECTED', 'CANCELLED', 'DELIVERED', 'PICKED_UP'];
+// The customer can cancel until the restaurant accepts
+window.CANCELLABLE_STATES = ['PLACED', 'PAYMENT_PENDING', 'PAYMENT_FAILED', 'SENT_TO_STORE', 'RECEIVED'];
 
 window.FAQS = [
-  { q: 'How long does delivery take?', a: 'Most orders arrive in 20–40 minutes. You can see a live estimate on the order tracking page.' },
-  { q: 'Can I schedule an order for later?', a: 'Yes. At checkout choose “Schedule” under Delivery Time and pick a time slot.' },
-  { q: 'How do I use a voucher?', a: 'Enter your code in the voucher box on the Cart page. Try GOOD10 or FOODIE20.' },
-  { q: 'Can I cancel my order?', a: 'Orders can be cancelled until the restaurant starts preparing them. Contact support for help.' },
-  { q: 'What payment methods do you accept?', a: 'Cards, Foodie Wallet and Cash on Delivery. Manage them under Account → Payment Methods.' },
+  { q: 'How long does it take?', a: 'You see an estimate before you order. Once the restaurant accepts, the tracking page shows when your food will be ready.' },
+  { q: 'How do I pay?', a: 'Pay in cash on delivery, or at the counter when you pick up. Online payment is coming soon.' },
+  { q: 'Why do I need to verify my mobile number?', a: 'The restaurant only takes cash orders from verified numbers. You verify once on each device.' },
+  { q: 'Can I cancel my order?', a: 'Yes, until the restaurant accepts it. Open the order under My Orders and press Cancel order.' },
+  { q: 'Why can I not order right now?', a: 'The restaurant may be closed, outside its opening hours, or not taking online orders at the moment.' },
 ];
