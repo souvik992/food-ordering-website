@@ -57,19 +57,21 @@
             <ul class="cart-list">
               ${state.cart.map((l, i) => {
                 const item = byId(l.itemId);
+                const unit = A.unitPrice(l.itemId, l.modifierIds);
                 return `
                 <li class="cart-item">
-                  <a href="#/item/${encodeURIComponent(item.id)}">${media(item, 'thumb')}</a>
+                  <a href="#/item/${encodeURIComponent(item.id)}" aria-label="${esc(item.name)}">${media(item, 'thumb cart-thumb')}</a>
                   <div class="grow">
                     <div class="ci-top">
-                      <div><h3>${A.vegMark(item)}${esc(item.name)}</h3>${lineName(l)}</div>
+                      <div class="grow"><h3>${A.vegMark(item)}${esc(item.name)}</h3>${lineName(l)}</div>
+                      <strong class="price-tag mono">${money(unit * l.qty)}</strong>
                     </div>
+                    <p class="muted small">${money(unit)} each</p>
                     <div class="ci-bottom">
-                      <span class="muted">${money(item.price)}${l.modifierIds.length ? ' + options' : ''} each</span>
-                      <div class="qty">
-                        <button data-action="dec" data-i="${i}" aria-label="Decrease">${I.minus}</button>
-                        <span>${l.qty}</span>
-                        <button class="plus" data-action="inc" data-i="${i}" aria-label="Increase">${I.plus}</button>
+                      ${A.stepper(l.qty, 'inc', 'dec', `data-i="${i}"`, esc(item.name))}
+                      <div class="line-actions">
+                        ${item.modifierGroupIds.length ? `<a class="link-btn" href="#/edit/${encodeURIComponent(l.key)}">${I.edit} Edit</a>` : ''}
+                        <button class="link-btn danger" data-action="remove-line" data-i="${i}">Remove</button>
                       </div>
                     </div>
                   </div>
@@ -96,6 +98,11 @@
   A.action('dec', (el) => {
     const i = Number(el.dataset.i);
     if (--state.cart[i].qty <= 0) state.cart.splice(i, 1);
+    cartChanged();
+  });
+  A.action('remove-line', (el) => {
+    const [l] = state.cart.splice(Number(el.dataset.i), 1);
+    A.toast(`${byId(l.itemId).name} removed from cart`);
     cartChanged();
   });
   A.action('clear-cart', () => { state.cart = []; cartChanged(); });

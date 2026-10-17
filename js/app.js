@@ -69,9 +69,23 @@
     e.preventDefault();
     const { id } = el.dataset;
     A.addToCart(id, 1);
-    A.updateChrome();
     A.toast(`${A.byId(id).name} added to cart`);
-    el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+    A.refresh(); // the ADD button becomes a stepper
+  });
+  // Steppers on menu cards change the item's plain (no options) cart line
+  A.action('item-inc', (el, e) => {
+    e.preventDefault();
+    A.addToCart(el.dataset.id, 1);
+    A.refresh();
+  });
+  A.action('item-dec', (el, e) => {
+    e.preventDefault();
+    const i = state.cart.findIndex((l) => l.key === A.lineKey(el.dataset.id, []));
+    if (i < 0) return;
+    if (--state.cart[i].qty <= 0) state.cart.splice(i, 1);
+    state.checkoutKey = null;
+    A.save();
+    A.refresh();
   });
   A.action('choose', (el, e) => {
     e.preventDefault();

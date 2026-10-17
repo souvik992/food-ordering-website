@@ -33,6 +33,8 @@ window.Hub = (function () {
 
   return {
     base, slug, newKey,
+    // Menu photo published by the POS (item.image is "<sha256>.<jpg|png|webp>")
+    imageUrl: (name) => `${base}${storePath}/images/${encodeURIComponent(name)}`,
     store: () => call('GET', storePath),
     quote: (body) => call('POST', `${storePath}/quote`, body),
     sendOtp: (mobile) => call('POST', '/v1/otp/send', { mobile }),

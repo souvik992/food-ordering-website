@@ -82,7 +82,7 @@ window.App = (function () {
       ...i,
       category: catName.get(i.categoryId) || 'More',
       emoji: emojiFor(i.name, catName.get(i.categoryId)),
-      image: ITEM_PHOTOS[i.id] || null,
+      image: ITEM_PHOTOS[i.id] || (i.image ? Hub.imageUrl(i.image) : null),
       sort: (order.get(i.categoryId) ?? 999) * 10000 + n,
     }));
     // drop cart lines for items that left the menu
@@ -101,11 +101,33 @@ window.App = (function () {
     return line.modifierIds.map((id) => all.find((m) => m.id === id)?.name).filter(Boolean);
   };
 
+  // Price of one unit with its options, for display; the order total always comes from the hub
+  const unitPrice = (itemId, modifierIds = []) => {
+    const all = A.shop?.menu?.modifierGroups.flatMap((g) => g.modifiers) || [];
+    return (byId(itemId)?.price || 0) + modifierIds.reduce((a, id) => a + (all.find((m) => m.id === id)?.price || 0), 0);
+  };
+  const lineKey = (itemId, mods) => `${itemId}|${mods.join(',')}`;
+  // Quantity of the plain (no options) line for an item
+  const plainQty = (itemId) => state.cart.find((l) => l.key === lineKey(itemId, []))?.qty || 0;
+
   function addToCart(itemId, qty = 1, modifierIds = []) {
     const mods = [...modifierIds].sort();
-    const k = `${itemId}|${mods.join(',')}`;
+    const k = lineKey(itemId, mods);
     const line = state.cart.find((l) => l.key === k);
     if (line) line.qty = Math.min(99, line.qty + qty);
+    else state.cart.push({ key: k, itemId: String(itemId), modifierIds: mods, qty });
+    state.checkoutKey = null;
+    save();
+  }
+
+  // Changes a cart line's options and quantity in place (merging into an identical line if there is one)
+  function replaceLine(oldKey, itemId, qty, modifierIds) {
+    const mods = [...modifierIds].sort();
+    const k = lineKey(itemId, mods);
+    const i = state.cart.findIndex((l) => l.key === oldKey);
+    const same = state.cart.find((l) => l.key === k && l.key !== oldKey);
+    if (same) { same.qty = Math.min(99, same.qty + qty); if (i >= 0) state.cart.splice(i, 1); }
+    else if (i >= 0) state.cart[i] = { key: k, itemId: String(itemId), modifierIds: mods, qty };
     else state.cart.push({ key: k, itemId: String(itemId), modifierIds: mods, qty });
     state.checkoutKey = null;
     save();
@@ -249,8 +271,26 @@ window.App = (function () {
       </div>`;
   }
 
-  // Items with options open their page instead of going straight into the cart
-  const addAttrs = (item) => (item.modifierGroupIds.length ? `data-action="choose" data-id="${esc(item.id)}"` : `data-action="add" data-id="${esc(item.id)}"`);
+  // Quantity stepper; inc/dec are the actions, attrs identify the line
+  const stepper = (qty, inc, dec, attrs, name) => `
+    <div class="stepper">
+      <button data-action="${dec}" ${attrs} aria-label="${qty === 1 ? `Remove ${name}` : `One less ${name}`}">${qty === 1 ? I.trash : I.minus}</button>
+      <span aria-live="polite">${qty}</span>
+      <button data-action="${inc}" ${attrs} aria-label="One more ${name}" ${qty >= 99 ? 'disabled' : ''}>${I.plus}</button>
+    </div>`;
+
+  // ADD button; becomes a stepper once a plain item is in the cart. Items with options open their page instead.
+  function addControl(item) {
+    const id = esc(item.id);
+    const name = esc(item.name);
+    if (item.modifierGroupIds.length) {
+      return `<span class="add-wrap"><button class="add-pill" data-action="choose" data-id="${id}" aria-label="Add ${name} to cart">ADD ${I.plus}</button><small>Customisable</small></span>`;
+    }
+    const n = plainQty(item.id);
+    return n
+      ? `<span class="add-wrap">${stepper(n, 'item-inc', 'item-dec', `data-id="${id}"`, name)}</span>`
+      : `<span class="add-wrap"><button class="add-pill" data-action="add" data-id="${id}" aria-label="Add ${name} to cart">ADD ${I.plus}</button></span>`;
+  }
 
   // Large photo card (home, favourites)
   function cardHTML(item) {
@@ -261,11 +301,12 @@ window.App = (function () {
         ${media(item, 'card-img')}
         <button class="icon-btn fav ${fav ? 'on' : ''}" data-action="fav" data-id="${esc(item.id)}" aria-label="Favourite">${I.heart}</button>
         <div class="card-body">
-          <div>
+          <div class="grow">
             <h3>${vegMark(item)}${esc(item.name)}</h3>
-            <p class="meta">${money(item.price)} · ${esc(item.category)}${item.modifierGroupIds.length ? ' · options' : ''}</p>
+            <p class="meta">${esc(item.category)}</p>
+            <strong class="price-tag">${money(item.price)}</strong>
           </div>
-          <button class="round-btn" ${addAttrs(item)} aria-label="Add ${esc(item.name)} to cart">${I.arrow}</button>
+          ${addControl(item)}
         </div>
       </article>`;
   }
@@ -281,8 +322,8 @@ window.App = (function () {
             <div><h3>${vegMark(item)}${esc(item.name)}</h3><p class="muted">${esc(item.category)}</p></div>
           </div>
           <div class="ci-bottom">
-            <div><strong>${money(item.price)}</strong>${item.modifierGroupIds.length ? ' <small class="muted">· options</small>' : ''}</div>
-            <button class="add-btn" ${addAttrs(item)} aria-label="Add ${esc(item.name)} to cart">${I.plus}</button>
+            <strong class="price-tag">${money(item.price)}</strong>
+            ${addControl(item)}
           </div>
         </div>
       </article>`;
@@ -325,9 +366,9 @@ window.App = (function () {
   Object.assign(A, {
     store, state, save, money, byId, cartCount, esc, fmtDate, media, vegMark, toast, notify,
     defaultAddress, addressText, unreadCount, I, PAYMENT_ICONS, ADDRESS_ICONS,
-    setShop, modifierGroups, modifierNames, addToCart, hubLines, getQuote, clearQuote, summaryRows,
+    setShop, modifierGroups, modifierNames, addToCart, replaceLine, unitPrice, plainQty, lineKey, hubLines, getQuote, clearQuote, summaryRows,
     isActive, updateOrder, statusText,
-    header, cartButton, empty, cardHTML, rowHTML, listRow, option, shopBanner,
+    header, cartButton, empty, stepper, addControl, cardHTML, rowHTML, listRow, option, shopBanner,
     routes, actions, forms, inputs,
     route: (name, def) => { routes[name] = def; },
     action: (name, fn) => { actions[name] = fn; },
