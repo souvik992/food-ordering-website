@@ -101,7 +101,7 @@
         </div>
       </div>
       <div class="container foot-base">
-        <span>© ${new Date().getFullYear()} ${esc(A.shop.name)}. All rights reserved.</span>
+        <span>© ${new Date().getFullYear()} ${esc(A.shop.name)}. All rights reserved.${A.demo ? ' · <a href="images/demo/CREDITS.md" target="_blank" rel="noopener">Demo photo credits</a>' : ''}</span>
         <span>Ordering powered by <b>Tiffin</b></span>
       </div>`;
   }
@@ -144,6 +144,7 @@
   // A page can register something to stop when it is left (e.g. a live status stream)
   A.onLeave = (fn) => { cleanup = fn; };
   A.current = () => current;
+  A.canGoBack = () => navCount > 0;
 
   const ALIASES = { menu: '', cart: 'checkout', track: 'orders', success: 'orders' };
 
@@ -231,22 +232,48 @@
     if (name && A.inputs[name]) A.inputs[name](e.target, e);
   });
 
-  /* ---------- Start: load the store and its menu from the hub ---------- */
-  function showLoadError(err) {
-    $app.innerHTML = `<section class="page container">${A.empty('📡', 'Could not load the menu', esc(err.message), null)}
-      <div class="center"><button class="btn" data-action="reload">Try again</button></div></section>`;
+  /* ---------- Demo mode: the hub cannot be reached ---------- */
+  const realStore = Hub.store;
+  function showDemoBanner() {
+    const $b = document.getElementById('demo-banner');
+    $b.innerHTML = `
+      <div class="container demo-inner">
+        <span class="demo-ico">!</span>
+        <p><b>Demo mode.</b> <span class="xs-hide">We can’t reach the restaurant’s order system right now, so this is a preview with sample dishes. Orders placed here are <b>not sent to the restaurant</b>.</span><span class="xs-show">Restaurant offline: sample dishes, orders are <b>not sent</b>.</span></p>
+        <button class="btn sm outline" data-action="reload">Try again</button>
+      </div>`;
+    $b.hidden = false;
+    document.body.classList.add('is-demo');
+  }
+  // Keeps checking the real hub; offers to switch as soon as it answers
+  function watchForHub() {
+    const t = setInterval(async () => {
+      try {
+        await realStore();
+        clearInterval(t);
+        const $b = document.getElementById('demo-banner');
+        $b.classList.add('back');
+        $b.querySelector('p').innerHTML = '<b>The restaurant is back online.</b> Reload to see the real menu and order for real.';
+        $b.querySelector('button').textContent = 'Reload';
+      } catch { /* still unreachable */ }
+    }, 30_000);
   }
   A.action('reload', () => location.reload());
 
+  /* ---------- Start: load the store and its menu from the hub ---------- */
   async function start() {
     $app.innerHTML = `<section class="page container"><div class="loading"><span class="spinner"></span><p>Loading the menu…</p></div></section>`;
     try {
       A.setShop(await Hub.store());
     } catch (err) {
-      showLoadError(err);
-      return;
+      // No hub: show the demo website (sample menu, everything works, nothing reaches the restaurant)
+      console.warn('Order hub not reachable, showing the demo website:', err.message);
+      A.enterDemo();
+      A.setShop(await Hub.store());
+      showDemoBanner();
+      watchForHub();
     }
-    document.title = `${A.shop.name} · Order online`;
+    document.title = `${A.shop.name} · Order online${A.demo ? ' (demo)' : ''}`;
     renderFooter();
     window.addEventListener('hashchange', () => { navCount++; A.closeModal?.(); A.render(); window.scrollTo(0, 0); });
     A.render();

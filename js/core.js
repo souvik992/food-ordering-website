@@ -17,7 +17,8 @@ window.App = (function () {
   const key = (k) => `tf_${Hub.slug}_${k}`;
   const list = (v) => (Array.isArray(v) ? v : []);
 
-  const state = {
+  // What is kept in this browser (per store; demo mode has its own copy)
+  const saved = () => ({
     // cart lines: { key, itemId, modifierIds: [], qty }
     cart: list(store.get(key('cart'), [])),
     favs: new Set(list(store.get(key('favs'), []))),
@@ -29,6 +30,10 @@ window.App = (function () {
     addresses: list(store.get(key('addresses'), [])),
     fulfilment: store.get(key('fulfilment'), 'DELIVERY'),
     notifications: list(store.get(key('notifications'), [])),
+  });
+
+  const state = {
+    ...saved(),
     query: '',
     note: '',
     ordersFilter: 'all',
@@ -46,6 +51,13 @@ window.App = (function () {
     store.set(key('notifications'), state.notifications.slice(0, 50));
   }
 
+  // Demo mode (the order hub cannot be reached): use the stand-in hub and its own saved data
+  function enterDemo() {
+    A.demo = true;
+    Object.assign(Hub, DemoHub);
+    Object.assign(state, saved(), { checkoutKey: null, justPlaced: null });
+  }
+
   /* ---------- Helpers ---------- */
   // Amounts from the hub are in paise; this only formats them
   const money = (p) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: p % 100 ? 2 : 0, maximumFractionDigits: 2 });
@@ -55,6 +67,8 @@ window.App = (function () {
   const fmtDate = (t) => `${new Date(t).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}, ${fmtTime(t)}`;
   const fmtTime = (t) => new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   const defaultAddress = () => state.addresses.find((a) => a.isDefault) || state.addresses[0] || null;
+  // The map position the hub needs for delivery (demo mode treats every address as nearby)
+  const addrLocation = (a) => (a && a.lat != null ? { lat: a.lat, lng: a.lng } : a && A.demo ? Hub.location : null);
   const addressText = (a) => [a.line1, a.line2, a.landmark, a.city, a.pincode].filter(Boolean).join(', ');
   const unreadCount = () => state.notifications.filter((n) => !n.read).length;
   const notify = (title, text) => { state.notifications.unshift({ id: Date.now() + Math.random(), title, text, date: Date.now(), read: false }); };
@@ -159,7 +173,7 @@ window.App = (function () {
   function quoteRequest() {
     const addr = defaultAddress();
     const delivery = state.fulfilment === 'DELIVERY';
-    return { fulfilment: state.fulfilment, location: delivery && addr && addr.lat != null ? { lat: addr.lat, lng: addr.lng } : null, lines: hubLines() };
+    return { fulfilment: state.fulfilment, location: delivery ? addrLocation(addr) : null, lines: hubLines() };
   }
   // The full quote for placing the order (needs the delivery location)
   function getQuote() {
@@ -388,7 +402,7 @@ window.App = (function () {
 
   Object.assign(A, {
     store, state, save, money, byId, cartCount, esc, fmtDate, fmtTime, media, vegTag, toast, notify,
-    defaultAddress, addressText, unreadCount, signedIn, I, ADDRESS_ICONS, initials,
+    defaultAddress, addrLocation, enterDemo, addressText, unreadCount, signedIn, I, ADDRESS_ICONS, initials,
     setShop, etaMinutes, hoursToday, modifierGroups, modifierNames, addToCart, setLineQty, qtyOf, hubLines,
     getQuote, getBasket, basketNow, clearQuote,
     isActive, updateOrder, statusText, failed, statusTag,

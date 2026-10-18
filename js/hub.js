@@ -13,6 +13,7 @@ window.Hub = (function () {
     try {
       r = await fetch(base + path, {
         method,
+        signal: AbortSignal.timeout ? AbortSignal.timeout(15000) : undefined,
         headers: { ...(body ? { 'content-type': 'application/json' } : {}), ...headers },
         body: body ? JSON.stringify(body) : undefined,
       });

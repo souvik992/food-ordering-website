@@ -21,6 +21,17 @@ No build step: plain HTML, CSS and JavaScript. Host the folder on any static web
 
 For testing, override both settings in the address bar: `index.html?hub=http://localhost:4900&store=demo`.
 
+## Demo mode (no hub connection)
+
+If the website cannot reach the order hub when it opens (hub down, wrong address, no internet), it shows a **demo
+website** instead of an error: a sample menu with photos (`js/demo.js`, `images/demo/`) where everything works (options,
+cart, checkout with the code `123456`, placing orders, live tracking from a pretend kitchen, cancel and reorder). A
+warning above the header says orders are **not sent to the restaurant**. Demo carts and orders are kept apart from real
+ones. The site keeps checking the hub every 30 seconds and offers a reload once it answers.
+
+Demo mode is only for an unreachable hub. A hub that answers but has no menu yet, or is closed, shows that as usual.
+Photo credits: `images/demo/CREDITS.md`.
+
 ## What comes from where
 
 | Thing | Source |

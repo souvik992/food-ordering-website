@@ -1,9 +1,9 @@
-// Checkout: order review, delivery details, mobile verification and payment on one page with a sticky summary.
+// Cart & checkout: order review, delivery or pickup, payment and a sticky summary. Signing in and adding the delivery
+// address happen on their own pages (#/login/checkout, #/address-new/checkout), which come back here.
 // Totals come from the hub (a quote); the order goes to the hub, which sends it to the restaurant's POS (ODS screen).
 (function (A) {
   const { I, state, esc, money, byId } = A;
   const C = window.TIFFIN_CONFIG;
-  let addingAddress = false;
   let lastQuote = null; // the full quote the Place Order button was enabled with
 
   function linesHTML() {
@@ -34,7 +34,7 @@
       </div>`;
   }
 
-  // Name + mobile number, verified with a 6-digit code from the hub
+  // Name + mobile number, verified with a 6-digit code from the hub (used by the sign-in page)
   function contactHTML() {
     if (A.signedIn()) {
       return `
@@ -76,19 +76,41 @@
 
   A.contactHTML = contactHTML;
 
-  function addressHTML() {
-    const showForm = addingAddress || !state.addresses.length;
+  // What is still missing before the order can be placed: sign in, then (for delivery) an address
+  function nextStep() {
+    if (!A.signedIn()) return { label: 'Login to place order', href: '#/login/checkout', icon: I.user };
+    if (state.fulfilment === 'DELIVERY' && !A.defaultAddress()) return { label: 'Add delivery address', href: '#/address-new/checkout', icon: I.pin };
+    return null;
+  }
+
+  // Who is ordering and where it goes (read-only here; changed on their own pages)
+  function detailsHTML(delivery) {
+    if (!A.signedIn()) {
+      return `<div class="step-hint">${I.user}<span>Log in with your mobile number to ${delivery ? 'add your delivery address and ' : ''}place the order.</span></div>`;
+    }
+    const u = state.user;
+    const addr = A.defaultAddress();
     return `
-      <div class="addr-block">
-        <div class="sub-head"><h3>Delivery address</h3>${state.addresses.length && !showForm ? '<button class="link" data-action="add-address">+ New address</button>' : ''}</div>
-        ${state.addresses.length ? `<div class="tiles stack">
-          ${state.addresses.map((a) => A.tile({
-            action: 'addr-select', value: a.id, selected: a.isDefault, icon: A.ADDRESS_ICONS[a.label] || I.pin,
-            title: esc(a.label), sub: esc(A.addressText(a)) + (a.lat == null ? ' · <span class="err">no map location</span>' : ''),
-          })).join('')}
-        </div>` : ''}
-        ${showForm ? A.addressForm({ cancel: state.addresses.length > 0 }) : ''}
-      </div>`;
+      <div class="detail-row">
+        <span class="tile-ico">${I.user}</span>
+        <div class="grow"><small>Ordering as</small><strong>${esc(u.name || 'Add your name')} · ${esc(u.phone)}</strong></div>
+        <a class="link accent" href="#/account">Edit</a>
+      </div>
+      ${delivery ? (addr ? `
+      <div class="detail-row">
+        <span class="tile-ico">${A.ADDRESS_ICONS[addr.label] || I.pin}</span>
+        <div class="grow"><small>Deliver to · ${esc(addr.label)}</small><strong>${esc(A.addressText(addr))}</strong>${addr.lat == null && !A.demo ? '<small class="err">This address has no map location. Add it again with “Use my current location”.</small>' : ''}</div>
+        <a class="link accent" href="#/addresses/checkout">Change</a>
+      </div>` : `
+      <a class="add-row" href="#/address-new/checkout">${I.plus}<span>Add a delivery address</span></a>`)
+      : `<p class="muted small">Collect from <b>${esc(C.address || A.shop.name)}</b>. We show you when it is ready.</p>`}`;
+  }
+
+  // The main button: the next step, or Place Order once everything is there
+  function mainButton(bar) {
+    const step = nextStep();
+    if (step) return `<a class="btn block lg next-btn" href="${step.href}">${step.icon}<span>${step.label}</span>${bar ? '<b id="bar-total"></b>' : ''}</a>`;
+    return `<button class="btn block lg place-btn" data-action="place-order" disabled><span>Place Order</span>${bar ? '<b id="bar-total"></b>' : ''}</button>`;
   }
 
   /* ---------- Checkout ---------- */
@@ -103,6 +125,7 @@
         <section class="page container checkout">
           ${A.pageHead('Checkout')}
           ${A.shopBanner()}
+          ${A.demo ? `<div class="notice warn">${I.help}<span><b>Demo checkout.</b> Everything works, but this order is not sent to the restaurant. The login code is shown on screen.</span></div>` : ''}
           <div class="co-layout">
             <div class="co-main">
               <section class="card">
@@ -114,8 +137,7 @@
               <section class="card">
                 <div class="card-head"><h2>${delivery ? 'Delivery' : 'Pickup'}</h2></div>
                 ${fulfilmentTiles()}
-                ${contactHTML()}
-                ${delivery ? addressHTML() : `<p class="muted small">Collect from <b>${esc(C.address || A.shop.name)}</b>. We show you when it is ready.</p>`}
+                <div class="details">${detailsHTML(delivery)}</div>
               </section>
 
               <section class="card">
@@ -132,14 +154,14 @@
                 <h2>Summary</h2>
                 <dl class="totals" id="totals"><div><dt class="muted">Working out the total…</dt></div></dl>
                 <p class="err small" id="place-err"></p>
-                <button class="btn block lg place-btn" data-action="place-order" disabled>Place Order</button>
-                <p class="fine">${A.signedIn() ? 'Prices include GST. By placing the order you agree to pay on ' + (delivery ? 'delivery.' : 'pickup.') : 'Verify your phone number to place the order.'}</p>
+                ${mainButton(false)}
+                <p class="fine">${nextStep() ? 'Prices include GST.' : 'Prices include GST. By placing the order you agree to pay on ' + (delivery ? 'delivery.' : 'pickup.')}</p>
               </div>
             </aside>
           </div>
           <div class="co-bar">
             <small id="bar-breakdown"></small>
-            <button class="btn block lg place-btn" data-action="place-order" disabled><span>Place Order</span><b id="bar-total"></b></button>
+            ${mainButton(true)}
           </div>
         </section>`;
     },
@@ -147,7 +169,7 @@
   });
 
   // Shows the hub's prices: per line, the summary and the totals
-  function fill(q, note) {
+  function fill(q, note, soft = false) {
     if (!document.getElementById('totals')) return;
     state.cart.forEach((l, i) => {
       const ql = q?.lines?.[i];
@@ -166,6 +188,7 @@
       ${q?.etaMinutes && !note ? `<div class="eta"><dt>${I.clock} Ready in about ${q.etaMinutes} min after the restaurant accepts</dt></div>` : ''}`;
     const err = document.getElementById('place-err');
     err.textContent = note || '';
+    err.className = soft ? 'muted small' : 'err small';
     const bar = document.getElementById('bar-breakdown');
     if (bar) bar.textContent = q ? rows.map(([k, v]) => `${k.replace(/ \(.*\)/, '')} ${v}`).join(' · ') : '';
     const total = document.getElementById('bar-total');
@@ -183,11 +206,12 @@
       const q = await A.getQuote();
       fill(q, null);
       lastQuote = q;
-      setPlaceEnabled(A.shop.open && A.signedIn());
+      setPlaceEnabled(A.shop.open && !nextStep());
     } catch (e) {
       if (e.code === 'NO_LOCATION') {
         const b = await A.getBasket().catch(() => null);
-        fill(b, state.addresses.length ? 'This address has no map location. Add it again with “Use my current location”.' : 'Add your delivery address to see the delivery fee.');
+        if (A.defaultAddress()) fill(b, 'This address has no map location, so the delivery fee cannot be worked out.');
+        else fill(b, 'The delivery fee is added once you add your address.', true);
       } else {
         fill(A.basketNow(), e.message);
       }
@@ -195,9 +219,6 @@
   }
 
   A.action('set-fulfilment', (el) => { state.fulfilment = el.dataset.value; A.cartChanged(); });
-  A.action('add-address', () => { addingAddress = true; A.refresh(); });
-  A.action('addr-cancel', () => { addingAddress = false; A.refresh(); });
-  A.addressSaved = () => { addingAddress = false; };
 
   A.input('note', (el) => { state.note = el.value; });
   A.input('cust-name', (el) => { state.user = { ...state.user, name: el.value.trim() }; A.save(); });
@@ -207,7 +228,7 @@
     if (placing) return;
     const err = document.getElementById('place-err');
     err.textContent = '';
-    if (!A.signedIn()) { err.textContent = 'Verify your phone number first.'; return; }
+    if (nextStep()) { location.hash = nextStep().href; return; }
     const buttons = document.querySelectorAll('.place-btn');
     placing = true;
     buttons.forEach((b) => { b.disabled = true; b.classList.add('busy'); });
@@ -225,7 +246,7 @@
         menuVersion: A.shop.menu.version,
         expectedTotal: quote.total,
         channel: 'website',
-        location: delivery ? { lat: addr.lat, lng: addr.lng } : null,
+        location: delivery ? A.addrLocation(addr) : null,
         address: delivery ? { line1: addr.line1, line2: addr.line2 || null, landmark: addr.landmark || null, city: addr.city, pincode: addr.pincode } : null,
       };
       // the same key on a retry, so a network hiccup never creates two orders
@@ -247,7 +268,7 @@
       if (e.code === 'OTP_REQUIRED') {
         state.user = { ...state.user, otpToken: null }; A.save();
         A.toast(e.message);
-        A.refresh();
+        location.hash = '#/login/checkout';
         return;
       }
       if (e.code === 'PRICE_CHANGED' || e.code === 'ITEM_UNAVAILABLE') {

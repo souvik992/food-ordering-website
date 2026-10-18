@@ -40,7 +40,7 @@
     const list = state.orders.filter(test);
     return `
       <div class="page-head flat">
-        <h1>My orders</h1>
+        ${A.mBack}<h1>My orders</h1>
         ${state.orders.length ? `<div class="filters">
           ${Object.entries(FILTERS).map(([k, [label]]) => `<button class="filter ${state.ordersFilter === k ? 'on' : ''}" data-action="orders-filter" data-f="${k}">${label}</button>`).join('')}
         </div>` : ''}
@@ -89,7 +89,9 @@
       : 'Waiting for the restaurant';
     return `
       ${state.justPlaced === o.id ? `
-        <div class="notice ok">${I.check}<span><b>Order placed.</b> ${esc(o.number)} was sent to ${esc(A.shop.name)}. This page updates live when the kitchen accepts it.</span></div>` : ''}
+        ${A.demo
+          ? `<div class="notice warn">${I.help}<span><b>Demo order placed.</b> ${esc(o.number)} was not sent to a restaurant. A pretend kitchen moves it along so you can see live tracking.</span></div>`
+          : `<div class="notice ok">${I.check}<span><b>Order placed.</b> ${esc(o.number)} was sent to ${esc(A.shop.name)}. This page updates live when the kitchen accepts it.</span></div>`}` : ''}
       <div class="card od">
         <div class="od-head">
           <button class="icon-btn" data-action="back" aria-label="Back">${I.back}</button>

@@ -3,6 +3,10 @@
 (function (A) {
   const { I, state, esc, fmtDate, cardHTML } = A;
 
+  // Back button on phones only (on larger screens the side menu is there)
+  const mBack = `<button class="icon-btn m-only" data-action="back" aria-label="Back">${I.back}</button>`;
+  A.mBack = mBack;
+
   /* ---------- Mobile verification (shared with checkout) ---------- */
   A.otp = { pending: null, draftName: state.user?.name || '', draftPhone: '' }; // pending: { phone, devCode }
 
@@ -36,7 +40,7 @@
       A.save();
       A.toast(state.user.name ? `Welcome, ${state.user.name.split(' ')[0]}!` : 'Mobile number verified');
       const next = f.closest('[data-next]')?.dataset.next;
-      if (next != null) { history.replaceState(null, '', '#/' + next); A.render(); } else A.refresh();
+      if (next != null) goTo(next); else A.refresh();
     } catch (e) { A.toast(e.message); btn.disabled = false; }
   });
   A.action('change-number', () => {
@@ -49,10 +53,11 @@
     A.refresh();
   });
 
-  /* ---------- Address form (shared with checkout). Delivery needs the map location: the hub uses it for distance and fee ---------- */
+  /* ---------- Address form (the "Add delivery address" page). Delivery needs the map location: the hub uses it for distance and fee ---------- */
   let draftLoc = null;
-  A.addressForm = ({ cancel = false } = {}) => `
-    <form class="addr-form" data-form="address">
+  // next: the page to go back to once the address is saved (e.g. 'checkout')
+  A.addressForm = ({ next = 'addresses' } = {}) => `
+    <form class="addr-form" data-form="address" data-next="${esc(next)}">
       <div class="addr-labels">
         ${['Home', 'Work', 'Other'].map((l, i) => `<label class="filter-radio"><input type="radio" name="label" value="${l}" ${i === 0 ? 'checked' : ''} /><span>${l}</span></label>`).join('')}
       </div>
@@ -79,8 +84,8 @@
         </div>
       </details>
       <div class="form-btns">
-        ${cancel ? '<button type="button" class="btn soft" data-action="addr-cancel">Cancel</button>' : ''}
-        <button class="btn">Save address</button>
+        <button type="button" class="btn soft" data-action="back">Cancel</button>
+        <button class="btn">${next === 'checkout' ? 'Save and continue' : 'Save address'}</button>
       </div>
     </form>`;
 
@@ -100,11 +105,20 @@
     }, { enableHighAccuracy: true, timeout: 15000 });
   });
 
+  // Returns to the page that sent us here (e.g. the cart) by stepping back, so Back never lands on a finished form;
+  // otherwise opens it in place of the current page
+  const goTo = (page) => {
+    if (A.canGoBack() && A.prevRoute === page.split('/')[0]) { history.back(); return; }
+    history.replaceState(null, '', '#/' + page); A.render(); window.scrollTo(0, 0);
+  };
+
+  let addrNext = null; // the page that asked for an address to be chosen (e.g. 'checkout')
   A.action('addr-select', (el) => {
     state.addresses.forEach((a) => { a.isDefault = a.id === Number(el.dataset.value); });
     A.clearQuote(); A.save();
     A.toast('Delivery address updated');
-    A.cartChanged();
+    A.renderHeader();
+    if (addrNext) goTo(addrNext); else A.refresh();
   });
   A.action('addr-del', (el, e) => {
     e.stopPropagation();
@@ -128,10 +142,10 @@
     state.addresses.forEach((a) => { a.isDefault = false; });
     state.addresses.push(addr);
     draftLoc = null;
-    A.addressSaved?.();
     A.clearQuote(); A.save();
-    A.toast(hasLoc ? 'Address saved' : 'Address saved. Add its location before ordering delivery.');
-    A.refresh(); A.renderHeader();
+    A.toast(hasLoc || A.demo ? 'Address saved' : 'Address saved. Add its location before ordering delivery.');
+    A.renderHeader();
+    goTo(f.dataset.next || 'addresses'); // back to the cart (or the address list)
   });
 
   /* ---------- Profile (the mobile number is the verified one; change it by verifying again) ---------- */
@@ -161,35 +175,57 @@
 
   /* ---------- Sign in ---------- */
   function signInHTML(next) {
+    const fromCart = next === 'checkout';
     return `
-      <div class="page-head flat"><h1>Sign in</h1></div>
+      <div class="page-head flat">${fromCart ? `<button class="icon-btn" data-action="back" aria-label="Back">${I.back}</button>` : ''}<h1>${fromCart ? 'Login to place your order' : 'Sign in'}</h1></div>
       <div class="card" data-next="${esc(next)}">
-        <p class="muted">Verify your mobile number to order and track your food. The restaurant only takes cash orders from verified numbers.</p>
+        <p class="muted">${fromCart ? 'Enter your mobile number. We send a 6-digit code to verify it, then take you back to your cart.' : 'Verify your mobile number to order and track your food. The restaurant only takes cash orders from verified numbers.'}</p>
         ${A.signedIn() ? `<p>You are signed in as <b>${esc(state.user.phone)}</b>.</p><a class="btn" href="#/${esc(next)}">Continue</a>` : A.contactHTML()}
       </div>`;
   }
   A.route('login', {
-    render(next = 'account') { return A.accountPage('account', signInHTML(next)); },
-    mount() { document.querySelector('.account-main input[type="tel"], .account-main [name="code"]')?.focus(); },
+    render(next = 'account') {
+      // already signed in (e.g. came back with Back): go straight on
+      if (A.signedIn() && next === 'checkout') { setTimeout(() => goTo(next)); return ''; }
+      return next === 'checkout'
+        ? `<section class="page container narrow focus-page">${signInHTML(next)}</section>`
+        : A.accountPage('account', signInHTML(next));
+    },
+    mount() { document.querySelector('.page input[type="tel"], .page [name="code"]')?.focus(); },
+  });
+
+  /* ---------- Add delivery address (its own page; saves and goes back) ---------- */
+  A.route('address-new', {
+    render(next = 'addresses') {
+      if (next === 'checkout' && !A.signedIn()) { setTimeout(() => goTo('login/checkout')); return ''; }
+      return `
+        <section class="page container narrow focus-page">
+          ${A.pageHead('Add delivery address')}
+          <div class="card">
+            ${next === 'checkout' ? '<p class="muted">Where should we deliver your order? We save it for next time.</p>' : ''}
+            ${A.addressForm({ next })}
+          </div>
+        </section>`;
+    },
+    mount() { document.querySelector('[name="line1"]')?.focus(); },
   });
 
   /* ---------- Addresses ---------- */
   A.route('addresses', {
-    render() {
+    render(next) {
+      addrNext = next || null;
+      const fromCart = next === 'checkout';
       return A.accountPage('addresses', `
-        <div class="page-head flat"><h1>Addresses</h1></div>
+        <div class="page-head flat">${fromCart ? `<button class="icon-btn" data-action="back" aria-label="Back">${I.back}</button>` : mBack}<h1>${fromCart ? 'Choose address' : 'Addresses'}</h1>
+          <a class="btn sm" href="#/address-new/${fromCart ? 'checkout' : 'addresses'}">${I.plus} New<span class="xs-hide">&nbsp;address</span></a></div>
         ${state.addresses.length ? `<div class="tiles stack">
           ${state.addresses.map((a) => A.tile({
             action: 'addr-select', value: a.id, selected: a.isDefault, icon: A.ADDRESS_ICONS[a.label] || I.pin,
             title: esc(a.label) + (a.isDefault ? ' <span class="tag soft orange">Default</span>' : ''),
-            sub: esc(A.addressText(a)) + (a.lat == null ? ' · <span class="err">no map location</span>' : ''),
+            sub: esc(A.addressText(a)) + (a.lat == null && !A.demo ? ' · <span class="err">no map location</span>' : ''),
             extra: `<button class="icon-btn sm" data-action="addr-del" data-id="${a.id}" aria-label="Delete address">${I.trash}</button>`,
           })).join('')}
-        </div>` : ''}
-        <div class="card">
-          <div class="card-head"><h2>Add a new address</h2></div>
-          ${A.addressForm()}
-        </div>`);
+        </div>` : A.empty('📍', 'No saved addresses', 'Add an address to get your food delivered.', { href: '#/address-new/addresses', label: 'Add address' })}`);
     },
   });
 
@@ -198,7 +234,7 @@
     render() {
       const favs = ITEMS.filter((i) => state.favs.has(i.id));
       return A.accountPage('favourites', `
-        <div class="page-head flat"><h1>Favourites</h1></div>
+        <div class="page-head flat">${mBack}<h1>Favourites</h1></div>
         ${favs.length ? `<div class="pgrid">${favs.map(cardHTML).join('')}</div>`
           : A.empty('❤️', 'No favourites yet', 'Tap the heart on any dish to save it here.', { href: '#/', label: 'Browse the menu' })}`);
     },
@@ -210,7 +246,7 @@
     render() {
       const list = state.notifications;
       return A.accountPage('notifications', `
-        <div class="page-head flat"><h1>Notifications</h1></div>
+        <div class="page-head flat">${mBack}<h1>Notifications</h1></div>
         ${list.length ? `<ul class="notes">${list.map((n) => `
           <li class="${n.read ? '' : 'unread'}">
             <span class="side-ico notifications">${I.bell}</span>
@@ -228,10 +264,11 @@
   A.route('help', {
     render() {
       return A.accountPage('help', `
-        <div class="page-head flat"><h1>Help & support</h1></div>
+        <div class="page-head flat">${mBack}<h1>Help & support</h1></div>
         <div class="faq">
           ${FAQS.map((f) => `<details><summary>${esc(f.q)}${I.chevDown}</summary><p>${esc(f.a)}</p></details>`).join('')}
-        </div>`);
+        </div>
+        ${A.demo ? '<p class="muted small credits">Demo photos from Wikimedia Commons: <a class="link" href="images/demo/CREDITS.md" target="_blank" rel="noopener">photo credits</a>.</p>' : ''}`);
     },
   });
 })(App);

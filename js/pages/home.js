@@ -80,6 +80,7 @@
 
   function heroImage() {
     if (C.heroImage) return C.heroImage;
+    if (A.demo) return 'images/demo/hero.jpg';
     return ITEMS.find((i) => i.image)?.image || null;
   }
 
