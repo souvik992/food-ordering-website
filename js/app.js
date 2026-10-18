@@ -234,22 +234,26 @@
 
   /* ---------- Demo mode: the hub cannot be reached ---------- */
   const realStore = Hub.store;
-  function showDemoBanner() {
+  // why: 'unreachable' (no answer from the hub) or 'no-menu' (the hub answers, but the restaurant's POS has not connected yet)
+  function showDemoBanner(why) {
     const $b = document.getElementById('demo-banner');
+    const long = why === 'no-menu'
+      ? 'The restaurant’s online menu is not connected yet, so this is a preview with sample dishes.'
+      : 'We can’t reach the restaurant’s order system right now, so this is a preview with sample dishes.';
     $b.innerHTML = `
       <div class="container demo-inner">
         <span class="demo-ico">!</span>
-        <p><b>Demo mode.</b> <span class="xs-hide">We can’t reach the restaurant’s order system right now, so this is a preview with sample dishes. Orders placed here are <b>not sent to the restaurant</b>.</span><span class="xs-show">Restaurant offline: sample dishes, orders are <b>not sent</b>.</span></p>
+        <p><b>Demo mode.</b> <span class="xs-hide">${long} Orders placed here are <b>not sent to the restaurant</b>.</span><span class="xs-show">${why === 'no-menu' ? 'Menu not connected yet' : 'Restaurant offline'}: sample dishes, orders are <b>not sent</b>.</span></p>
         <button class="btn sm outline" data-action="reload">Try again</button>
       </div>`;
     $b.hidden = false;
     document.body.classList.add('is-demo');
   }
-  // Keeps checking the real hub; offers to switch as soon as it answers
+  // Keeps checking the real hub; offers to switch as soon as it answers with a menu
   function watchForHub() {
     const t = setInterval(async () => {
       try {
-        await realStore();
+        if (!(await realStore()).menu) return;
         clearInterval(t);
         const $b = document.getElementById('demo-banner');
         $b.classList.add('back');
@@ -263,16 +267,23 @@
   /* ---------- Start: load the store and its menu from the hub ---------- */
   async function start() {
     $app.innerHTML = `<section class="page container"><div class="loading"><span class="spinner"></span><p>Loading the menu…</p></div></section>`;
+    // No hub, or the restaurant's POS has not connected to it yet (no store or no menu): show the demo website
+    // (sample menu, everything works, nothing reaches the restaurant). A store with a menu that is closed shows as usual.
+    let shop = null, why = null;
     try {
-      A.setShop(await Hub.store());
+      shop = await Hub.store();
+      if (!shop.menu) why = 'no-menu';
     } catch (err) {
-      // No hub: show the demo website (sample menu, everything works, nothing reaches the restaurant)
-      console.warn('Order hub not reachable, showing the demo website:', err.message);
+      why = err.code === 'NETWORK' || !err.status || err.status >= 500 ? 'unreachable' : 'no-menu';
+    }
+    if (why) {
+      console.warn(`Showing the demo website (${why === 'no-menu' ? 'the store has no menu on the hub yet' : 'the order hub cannot be reached'}).`);
       A.enterDemo();
-      A.setShop(await Hub.store());
-      showDemoBanner();
+      shop = await Hub.store();
+      showDemoBanner(why);
       watchForHub();
     }
+    A.setShop(shop);
     document.title = `${A.shop.name} · Order online${A.demo ? ' (demo)' : ''}`;
     renderFooter();
     window.addEventListener('hashchange', () => { navCount++; A.closeModal?.(); A.render(); window.scrollTo(0, 0); });
