@@ -5,8 +5,16 @@
 window.TIFFIN_CONFIG = {
   hubUrl: 'http://localhost:4900',
   store: 'demo',
+
+  // Optional: what the website says about the restaurant. Empty values are left out.
+  heroTitle: 'Freshly cooked, delivered hot',
+  heroSubtitle: 'Made to order the moment the kitchen accepts. Delivery or pickup.',
+  heroImage: '',   // a wide photo (https://…); without one the first dish photo is used
+  about: 'Home-style food cooked fresh in our kitchen every day.',
+  phone: '',       // shown in the footer, e.g. '+91 98765 43210'
+  address: '',     // shown in the footer and for pickup
 };
 
 // Optional photos for menu items, by POS item id: { '<item id>': 'https://.../photo.jpg' }.
-// Items without a photo show an emoji. (The hub menu does not carry photos yet.)
+// Photos added to items in the POS come from the hub and take priority. Items without a photo show an emoji.
 window.ITEM_PHOTOS = {};

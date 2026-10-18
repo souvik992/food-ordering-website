@@ -1,23 +1,22 @@
-// Orders list, order placed confirmation, and live order tracking (status straight from the hub)
+// Order history and order info with live tracking (status straight from the hub, which gets it from the POS)
 (function (A) {
-  const { I, state, esc, money, fmtDate } = A;
+  const { I, state, esc, money, fmtDate, fmtTime } = A;
 
   const findOrder = (id) => state.orders.find((o) => o.id === id);
-  const itemCount = (o) => o.lines.reduce((a, l) => a + l.qtyMilli / 1000, 0);
-  const itemSummary = (o) => o.lines.map((l) => `${l.qtyMilli / 1000}× ${l.name}`).join(', ');
-  const failed = (o) => ['REJECTED', 'AUTO_REJECTED', 'CANCELLED'].includes(o.state);
   const qty = (l) => l.qtyMilli / 1000;
-
-  const STEPS = {
-    PICKUP: [['SENT_TO_STORE', 'Sent to the restaurant', I.check], ['ACCEPTED', 'Accepted', I.check], ['PREPARING', 'Being prepared', I.pot], ['READY', 'Ready to collect', I.bag], ['PICKED_UP', 'Collected', I.homeO]],
-    DELIVERY: [['SENT_TO_STORE', 'Sent to the restaurant', I.check], ['ACCEPTED', 'Accepted', I.check], ['PREPARING', 'Being prepared', I.pot], ['READY', 'Ready', I.bag], ['OUT_FOR_DELIVERY', 'On the way', I.bike], ['DELIVERED', 'Delivered', I.homeO]],
+  const itemCount = (o) => o.lines.reduce((a, l) => a + qty(l), 0);
+  const itemSummary = (o) => o.lines.map((l) => `${qty(l)}× ${l.name}`).join(', ');
+  const lineMedia = (l) => {
+    const item = A.byId(l.itemId);
+    return item ? A.media(item, 'thumb') : `<div class="media thumb" data-emoji="${(EMOJI_RULES.find(([re]) => re.test(l.name)) || [, '🍽️'])[1]}"></div>`;
   };
-  const stepIndex = (o) => STEPS[o.fulfilment].findIndex(([s]) => s === (o.state === 'RECEIVED' ? 'SENT_TO_STORE' : o.state));
 
-  function statusPill(o) {
-    const cls = failed(o) ? 'bad' : FINAL_STATES.includes(o.state) ? 'done' : '';
-    return `<span class="pill ${cls}">${esc(STATUS[o.state] || o.state)}</span>`;
-  }
+  // Steps shown on the timeline, and which hub states count as reaching each one
+  const STEPS = {
+    DELIVERY: [['Sent', ['PLACED', 'SENT_TO_STORE', 'RECEIVED']], ['Accepted', ['ACCEPTED']], ['Preparing', ['PREPARING']], ['Ready', ['READY']], ['On the way', ['OUT_FOR_DELIVERY']], ['Delivered', ['DELIVERED']]],
+    PICKUP: [['Sent', ['PLACED', 'SENT_TO_STORE', 'RECEIVED']], ['Accepted', ['ACCEPTED']], ['Preparing', ['PREPARING']], ['Ready', ['READY']], ['Collected', ['PICKED_UP']]],
+  };
+  const stepIndex = (o) => STEPS[o.fulfilment].findIndex(([, states]) => states.includes(o.state));
 
   // Asks the hub for the latest status of every active order; re-draws when something changed
   async function refreshActive() {
@@ -28,164 +27,167 @@
     return changed;
   }
 
-  /* ---------- Orders list ---------- */
-  A.route('orders', {
-    tab: 'orders',
-    tabbar: true,
-    render() {
-      const head = A.header('My Orders', { back: false });
-      if (!state.orders.length) {
-        return `<section class="page panel">${head}${A.empty('🧾', 'No orders yet', 'Your orders will show up here.', { href: '#/menu', label: 'Order now' })}</section>`;
-      }
-      const active = state.orders.filter(A.isActive);
-      const past = state.orders.filter((r) => !A.isActive(r));
-      const list = state.ordersTab === 'active' ? active : past;
-      return `
-        <section class="page panel">
-          ${head}
-          <div class="seg" role="tablist">
-            <button class="${state.ordersTab === 'active' ? 'active' : ''}" data-action="orders-tab" data-tab="active" role="tab">Active (${active.length})</button>
-            <button class="${state.ordersTab === 'past' ? 'active' : ''}" data-action="orders-tab" data-tab="past" role="tab">Past (${past.length})</button>
+  const FILTERS = {
+    all: ['All', () => true],
+    active: ['In progress', (r) => A.isActive(r)],
+    delivered: ['Delivered', (r) => ['DELIVERED', 'PICKED_UP'].includes(r.order.state)],
+    other: ['Other', (r) => A.failed(r.order)],
+  };
+
+  /* ---------- Order history ---------- */
+  function historyHTML() {
+    const [, test] = FILTERS[state.ordersFilter] || FILTERS.all;
+    const list = state.orders.filter(test);
+    return `
+      <div class="page-head flat">
+        <h1>My orders</h1>
+        ${state.orders.length ? `<div class="filters">
+          ${Object.entries(FILTERS).map(([k, [label]]) => `<button class="filter ${state.ordersFilter === k ? 'on' : ''}" data-action="orders-filter" data-f="${k}">${label}</button>`).join('')}
+        </div>` : ''}
+      </div>
+      ${!state.orders.length ? A.empty('🧾', 'No orders yet', 'Orders you place on this device show up here.', { href: '#/', label: 'Order now' })
+      : !list.length ? `<div class="empty small"><span class="empty-ico">📦</span><p>No orders here.</p></div>`
+      : `<div class="order-list">${list.map(({ order: o }) => `
+        <article class="order-row">
+          <div class="or-main">
+            <div class="or-id"><strong>${esc(o.number)}</strong><small>${fmtDate(o.placedAt)}</small></div>
+            <div class="or-thumbs">${o.lines.slice(0, 4).map(lineMedia).join('')}${o.lines.length > 4 ? `<span class="more">+${o.lines.length - 4}</span>` : ''}</div>
+            <p class="or-items">${esc(itemSummary(o))}</p>
+            <small class="muted">${itemCount(o)} items · ${o.lines.length} ${o.lines.length === 1 ? 'dish' : 'dishes'} · ${o.fulfilment === 'DELIVERY' ? 'Delivery' : 'Pickup'}</small>
           </div>
-          ${list.length ? `<div class="order-grid">${list.map(({ order: o }) => `
-            <article class="order-card">
-              <div class="oc-head">
-                <div><strong>Order ${esc(o.number)}</strong><small class="muted">${fmtDate(o.placedAt)} · ${itemCount(o)} items · ${o.fulfilment === 'DELIVERY' ? 'Delivery' : 'Pickup'}</small></div>
-                ${statusPill(o)}
-              </div>
-              <div class="oc-body">
-                <p class="muted clamp-2">${esc(itemSummary(o))}</p>
-              </div>
-              <div class="oc-foot">
-                <strong>${money(o.total)}</strong>
-                <div class="row">
-                  ${A.isActive({ order: o })
-                    ? `<a class="btn sm" href="#/track/${encodeURIComponent(o.id)}">Track order</a>`
-                    : `<a class="btn sm ghost" href="#/track/${encodeURIComponent(o.id)}">Details</a><button class="btn sm" data-action="reorder" data-id="${esc(o.id)}">Reorder</button>`}
-                </div>
-              </div>
-            </article>`).join('')}</div>`
-          : `<div class="empty"><span>${state.ordersTab === 'active' ? '🛵' : '📦'}</span><p>No ${state.ordersTab} orders.</p></div>`}
-        </section>`;
-    },
-    mount() {
-      const tick = () => refreshActive().then((changed) => { if (changed) A.refresh(); });
-      if (state.orders.some(A.isActive)) { tick(); A.setTimer(tick, 15000); }
-    },
-  });
-
-  A.action('orders-tab', (el) => { state.ordersTab = el.dataset.tab; A.refresh(); });
-  A.action('reorder', (el) => {
-    const rec = findOrder(el.dataset.id);
-    let missing = 0;
-    rec.order.lines.forEach((l) => {
-      if (A.byId(l.itemId)) A.addToCart(l.itemId, qty(l), l.modifiers.map((m) => m.id));
-      else missing++;
-    });
-    A.toast(missing ? `Added to cart. ${missing} item(s) are no longer on the menu.` : 'Items added to cart');
-    location.hash = '#/cart';
-  });
-
-  /* ---------- Order placed ---------- */
-  A.route('success', {
-    tab: 'orders',
-    render(id) {
-      const rec = findOrder(id);
-      if (!rec) return null;
-      const o = rec.order;
-      return `
-        <section class="page panel success">
-          <div class="success-badge">${I.check}</div>
-          <h1>Order placed!</h1>
-          <p class="muted">Thanks${state.user?.name ? ', ' + esc(state.user.name.split(' ')[0]) : ''}! Your order <b>${esc(o.number)}</b> has been sent to ${esc(A.shop.name)}. We will show you here when they accept it.</p>
-          <div class="box receipt">
-            <div><span class="muted">${o.fulfilment === 'DELIVERY' ? 'Deliver to' : 'Pickup from'}</span><strong>${esc(o.address ? A.addressText(o.address) : A.shop.name)}</strong></div>
-            <div><span class="muted">Payment</span><strong>${o.fulfilment === 'DELIVERY' ? 'Cash on delivery' : 'Pay at the counter'}</strong></div>
-            <div><span class="muted">Total</span><strong>${money(o.total)}</strong></div>
-          </div>
-          <div class="btn-stack">
-            <a class="btn block" href="#/track/${encodeURIComponent(o.id)}">Track order</a>
-            <a class="btn block ghost" href="#/">Back to home</a>
-          </div>
-        </section>`;
-    },
-  });
-
-  /* ---------- Tracking ---------- */
-  A.route('track', {
-    tab: 'orders',
-    render(id) {
-      const rec = findOrder(id);
-      if (!rec) return null;
-      const o = rec.order;
-      const steps = STEPS[o.fulfilment];
-      const at = stepIndex(o);
-      const done = FINAL_STATES.includes(o.state);
-      const etaMin = o.etaAt ? Math.max(0, Math.round((o.etaAt - Date.now()) / 60000)) : null;
-      const heading = failed(o) ? STATUS[o.state]
-        : done ? 'Enjoy your meal! 🎉'
-        : o.state === 'OUT_FOR_DELIVERY' ? 'On the way'
-        : o.state === 'READY' ? (o.fulfilment === 'PICKUP' ? 'Ready to collect' : 'Ready')
-        : etaMin != null ? `Ready in about ${etaMin} min`
-        : 'Waiting for the restaurant';
-      return `
-        <section class="page panel">
-          ${A.header('Track Order', { right: `<span class="muted mono">${esc(o.number)}</span>` })}
-          <div class="split">
-            <div class="stack">
-              <div class="eta-card ${failed(o) ? 'bad' : ''}">
-                <div>
-                  <small>${esc(STATUS[o.state] || o.state)}</small>
-                  <strong>${esc(heading)}</strong>
-                </div>
-                <span class="eta-ico">${failed(o) ? '✕' : (steps[Math.max(0, at)] || steps[0])[2]}</span>
-                ${failed(o) ? '' : `<div class="progress"><span style="width:${(Math.max(0, at) / (steps.length - 1)) * 100}%"></span></div>`}
-              </div>
-              <p class="muted">${esc(A.statusText(o))}</p>
-
-              ${o.rider && o.state === 'OUT_FOR_DELIVERY' ? `
-              <div class="courier box">
-                <div class="avatar">${esc(o.rider.name.split(' ').map((s) => s[0]).join('').slice(0, 2).toUpperCase())}</div>
-                <div class="grow"><strong>${esc(o.rider.name)}</strong><small class="muted">Your rider</small></div>
-                ${o.rider.phone ? `<a class="icon-btn soft" href="tel:${esc(o.rider.phone)}" aria-label="Call the rider">${I.phone}</a>` : ''}
-              </div>` : ''}
-
-              ${failed(o) ? '' : `
-              <ol class="steps">
-                ${steps.map(([, title, icon], i) => `
-                  <li class="${i < at || (done && i === at) ? 'done' : i === at ? 'current' : ''}">
-                    <span class="step-ico">${i < at || (done && i === at) ? I.check : icon}</span>
-                    <div><strong>${title}</strong></div>
-                  </li>`).join('')}
-              </ol>`}
-
-              ${CANCELLABLE_STATES.includes(o.state) ? `<button class="btn block ghost" data-action="cancel-order" data-id="${esc(o.id)}">Cancel order</button>` : ''}
+          <div class="or-side">
+            <div class="or-total"><strong>${money(o.total)}</strong>${A.statusTag(o)}</div>
+            <div class="or-btns">
+              ${A.isActive({ order: o }) ? '' : `<button class="btn outline sm" data-action="reorder" data-id="${esc(o.id)}">${I.reorder} Reorder</button>`}
+              <a class="btn soft sm" href="#/orders/${encodeURIComponent(o.id)}">${A.isActive({ order: o }) ? 'Track' : 'Details'}</a>
             </div>
-
-            <aside class="summary">
-              <h2 class="h-sm">Order details</h2>
-              <ul class="mini-list">
-                ${o.lines.map((l) => `<li><span><b>${qty(l)}×</b> ${esc(l.name)}${l.modifiers.length ? ` <small class="muted">(${esc(l.modifiers.map((m) => m.name).join(', '))})</small>` : ''}</span><span>${money(l.lineTotal)}</span></li>`).join('')}
-              </ul>
-              ${A.summaryRows({ ...o, etaMinutes: null })}
-              <div class="kv"><span class="muted">${o.fulfilment === 'DELIVERY' ? 'Deliver to' : 'Pickup from'}</span><span>${esc(o.address ? A.addressText(o.address) : A.shop.name)}</span></div>
-              <div class="kv"><span class="muted">Payment</span><span>${o.fulfilment === 'DELIVERY' ? 'Cash on delivery' : 'Pay at the counter'}</span></div>
-              ${o.posBillNo ? `<div class="kv"><span class="muted">Bill no.</span><span>${esc(o.posBillNo)}</span></div>` : ''}
-              ${o.note ? `<div class="kv"><span class="muted">Note</span><span>${esc(o.note)}</span></div>` : ''}
-              <div class="kv"><span class="muted">Placed</span><span>${fmtDate(o.placedAt)}</span></div>
-              ${done ? `<button class="btn block" data-action="reorder" data-id="${esc(o.id)}">Reorder</button>` : ''}
-            </aside>
           </div>
-        </section>`;
+        </article>`).join('')}</div>`}`;
+  }
+
+  /* ---------- Order info ---------- */
+  function detailHTML(rec) {
+    const o = rec.order;
+    const steps = STEPS[o.fulfilment];
+    const at = stepIndex(o);
+    const done = FINAL_STATES.includes(o.state);
+    const bad = A.failed(o);
+    const delivery = o.fulfilment === 'DELIVERY';
+    const times = { PLACED: o.placedAt, ...rec.times };
+    const stepTime = (i) => {
+      const t = steps[i][1].map((s) => times[s]).find(Boolean);
+      if (t && i <= at) return fmtTime(t);
+      // the ready time the kitchen gave when it accepted
+      if (steps[i][0] === 'Ready' && o.etaAt && i > at) return `by ${fmtTime(o.etaAt)}`;
+      return '';
+    };
+    const heading = bad ? STATUS[o.state]
+      : o.state === 'OUT_FOR_DELIVERY' ? 'On the way'
+      : o.state === 'READY' ? (delivery ? 'Ready, leaving soon' : 'Ready to collect')
+      : done ? STATUS[o.state]
+      : o.etaAt ? `Ready by ${fmtTime(o.etaAt)}`
+      : 'Waiting for the restaurant';
+    return `
+      ${state.justPlaced === o.id ? `
+        <div class="notice ok">${I.check}<span><b>Order placed.</b> ${esc(o.number)} was sent to ${esc(A.shop.name)}. This page updates live when the kitchen accepts it.</span></div>` : ''}
+      <div class="card od">
+        <div class="od-head">
+          <button class="icon-btn" data-action="back" aria-label="Back">${I.back}</button>
+          <div class="grow"><h1>Order ${esc(o.number)}</h1><small class="muted">${fmtDate(o.placedAt)}</small></div>
+          ${A.statusTag(o)}
+        </div>
+
+        <div class="od-status ${bad ? 'bad' : ''}">
+          <div class="od-status-top">
+            <span class="od-kind">${delivery ? I.bike : I.bag} ${delivery ? 'Courier delivery' : 'Pickup'}</span>
+            <span class="muted">${I.clock} ${esc(heading)}</span>
+          </div>
+          ${bad ? `<p class="err">${esc(A.statusText(o))}</p>` : A.timeline(steps.map((s, i) => ({ label: s[0], at: stepTime(i) })), Math.max(0, at), done)}
+          ${bad ? '' : `<p class="muted small">${esc(A.statusText(o))}</p>`}
+        </div>
+
+        ${o.rider && ['OUT_FOR_DELIVERY', 'DELIVERED'].includes(o.state) ? `
+        <div class="od-rider">
+          <span class="avatar sm">${I.user}</span>
+          <div class="grow"><small class="muted">Your courier</small><strong>${esc(o.rider.name)}</strong></div>
+          ${o.rider.phone ? `<a class="btn soft sm" href="tel:${esc(o.rider.phone)}">${I.phone} Call</a>` : ''}
+        </div>` : ''}
+
+        <ul class="od-lines">
+          ${o.lines.map((l) => `
+            <li>
+              ${lineMedia(l)}
+              <div class="grow"><strong>${qty(l)} × ${esc(l.name)}</strong>${l.modifiers?.length ? `<small class="muted">${esc(l.modifiers.map((m) => m.name).join(', '))}</small>` : ''}</div>
+              <b>${money(l.lineTotal)}</b>
+            </li>`).join('')}
+        </ul>
+
+        <div class="od-cards">
+          <div class="mini-card">
+            <h3>Receipt</h3>
+            <dl class="totals sm">
+              <div><dt>Items (${itemCount(o)})</dt><dd>${money(o.itemsTotal)}</dd></div>
+              ${o.deliveryFee ? `<div><dt>Delivery${o.distanceKm != null ? ` (${o.distanceKm} km)` : ''}</dt><dd>${money(o.deliveryFee)}</dd></div>` : ''}
+              ${o.packagingFee ? `<div><dt>Packaging</dt><dd>${money(o.packagingFee)}</dd></div>` : ''}
+              <div class="total"><dt>Total</dt><dd>${money(o.total)}</dd></div>
+            </dl>
+            <p class="muted small">Prices include GST.${o.posBillNo ? ` Bill no. ${esc(o.posBillNo)}.` : ''}</p>
+          </div>
+          <div class="mini-card">
+            <h3>${delivery ? 'Delivery' : 'Pickup'} & payment</h3>
+            <dl class="totals sm">
+              <div><dt>Method</dt><dd>${delivery ? 'Cash on delivery' : 'Pay at the counter'}</dd></div>
+              <div><dt>Amount</dt><dd>${money(o.total)}</dd></div>
+              <div><dt>Status</dt><dd class="${o.paid ? 'ok' : 'accent'}">● ${o.paid ? 'Paid' : bad ? 'Not charged' : 'Pending'}</dd></div>
+              <div><dt>${delivery ? 'Deliver to' : 'Pickup from'}</dt><dd>${esc(o.address ? A.addressText(o.address) : (window.TIFFIN_CONFIG.address || A.shop.name))}</dd></div>
+              ${o.note ? `<div><dt>Note</dt><dd>${esc(o.note)}</dd></div>` : ''}
+            </dl>
+          </div>
+        </div>
+
+        <div class="od-actions">
+          ${CANCELLABLE_STATES.includes(o.state) ? `<button class="btn outline danger" data-action="cancel-order" data-id="${esc(o.id)}">Cancel order</button>` : ''}
+          ${done ? `<button class="btn" data-action="reorder" data-id="${esc(o.id)}">Order again</button>` : ''}
+        </div>
+      </div>`;
+  }
+
+  A.route('orders', {
+    render(id) {
+      if (id) {
+        const rec = findOrder(id);
+        if (!rec) return null;
+        return A.accountPage('orders', detailHTML(rec), 'is-detail');
+      }
+      return A.accountPage('orders', historyHTML());
     },
     mount(id) {
+      if (!id) {
+        const tick = () => refreshActive().then((changed) => { if (changed) A.refresh(); });
+        if (state.orders.some(A.isActive)) { tick(); A.setTimer(tick, 15000); }
+        return;
+      }
       const rec = findOrder(id);
       if (!rec || !A.isActive(rec)) return;
       // live updates from the hub; a slow poll as a safety net if the stream drops
       const stop = Hub.watch(rec.id, rec.token, (order) => { if (A.updateOrder(order)) A.refresh(); });
-      A.onLeave(stop);
-      A.setTimer(() => Hub.order(rec.id, rec.token).then((order) => { if (A.updateOrder(order)) A.refresh(); }).catch(() => {}), 30000);
+      A.onLeave(() => { stop(); if (state.justPlaced === id) state.justPlaced = null; });
+      const poll = () => Hub.order(rec.id, rec.token).then((order) => { if (A.updateOrder(order)) A.refresh(); }).catch(() => {});
+      poll();
+      A.setTimer(poll, 30000);
     },
+  });
+
+  A.action('orders-filter', (el) => { state.ordersFilter = el.dataset.f; A.refresh(); });
+  A.action('reorder', (el) => {
+    const rec = findOrder(el.dataset.id);
+    let missing = 0;
+    rec.order.lines.forEach((l) => {
+      if (A.byId(l.itemId)) A.addToCart(l.itemId, qty(l), (l.modifiers || []).map((m) => m.id));
+      else missing++;
+    });
+    A.toast(missing ? `Added to cart. ${missing} dish(es) are no longer on the menu.` : 'Added to your cart');
+    location.hash = '#/checkout';
   });
 
   A.action('cancel-order', async (el) => {
@@ -194,8 +196,7 @@
     el.disabled = true;
     try {
       await Hub.cancel(rec.id, rec.token, 'Cancelled by the customer on the website');
-      const order = await Hub.order(rec.id, rec.token);
-      A.updateOrder(order);
+      A.updateOrder(await Hub.order(rec.id, rec.token));
       A.toast('Order cancelled');
     } catch (e) {
       A.toast(e.message);

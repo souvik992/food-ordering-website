@@ -1,28 +1,138 @@
-// Router, navigation chrome, global event delegation, and loading the menu from the order hub
+// Router, header / footer / mobile cart bar, global event delegation, and loading the menu from the order hub
 (function (A) {
   'use strict';
 
-  const { I, state } = A;
+  const { I, state, esc, money } = A;
   const $app = document.getElementById('app');
-  const $tabbar = document.getElementById('tabbar');
+  const $header = document.getElementById('site-header');
+  const $footer = document.getElementById('site-footer');
+  const $cartBar = document.getElementById('cart-bar');
+  const C = window.TIFFIN_CONFIG;
 
-  /* ---------- Tab bar / sidebar ---------- */
-  const TABS = {
-    home: ['Home', I.home], menu: ['Menu', I.grid], cart: ['Cart', I.bag],
-    orders: ['Orders', I.orders], account: ['Account', I.user],
+  /* ---------- Header ---------- */
+  function contextPill() {
+    const f = A.shop.fulfilment || {};
+    if (state.fulfilment === 'PICKUP') {
+      return `
+        <button class="ctx-pill" data-action="toggle-fulfilment" ${f.delivery ? '' : 'disabled'} title="${f.delivery ? 'Switch to delivery' : ''}">
+          <span class="ctx-ico">${I.store}</span>
+          <span class="grow"><small>Pickup from</small><b>${esc(C.address || A.shop.name)}</b></span>
+          ${f.delivery ? `<span class="chev">${I.chevRight}</span>` : ''}
+        </button>`;
+    }
+    const addr = A.defaultAddress();
+    return `
+      <a class="ctx-pill" href="#/addresses">
+        <span class="ctx-ico">${I.nav}</span>
+        <span class="grow"><small>Delivery to</small><b>${addr ? esc([addr.line1, addr.line2].filter(Boolean).join(', ')) : 'Add your address'}</b></span>
+        <span class="chev">${I.chevRight}</span>
+      </a>`;
+  }
+
+  function kitchenPill() {
+    const s = A.shop;
+    if (!s.open) {
+      return `<div class="kitchen-pill closed" title="${esc(s.reason || '')}"><span class="ctx-ico">${I.clock}</span><span class="grow"><small>${esc(A.hoursToday() || 'Online orders')}</small><b><span class="xs-hide">Kitchen is closed</span><span class="xs-show">Closed</span></b></span></div>`;
+    }
+    const eta = A.etaMinutes();
+    return `<div class="kitchen-pill"><span class="ctx-ico">${I.chef}</span><span class="grow"><small>${eta ? `≈ ${eta} minutes` : 'Order now'}</small><b><span class="xs-hide">Kitchen is open</span><span class="xs-show">${eta ? `≈${eta} min · ` : ''}Open</span></b></span></div>`;
+  }
+
+  A.renderHeader = () => {
+    $header.innerHTML = `
+      <div class="container hdr">
+        <a class="logo" href="#/"><span class="logo-dot"></span><span>${esc(A.shop.name)}</span></a>
+        <div class="hdr-ctx">${contextPill()}${kitchenPill()}</div>
+        <div class="hdr-actions">
+          <button class="icon-btn" data-action="toggle-search" aria-label="Search the menu">${I.search}</button>
+          <a class="btn outline sm hide-sm" href="#/orders">${I.arrowRight} My orders</a>
+          <a class="icon-btn" href="#/account" aria-label="Account">${I.user}${A.state.orders.some(A.isActive) ? '<b class="dot"></b>' : ''}</a>
+        </div>
+      </div>
+      <div class="search-row container" ${searchOpen ? '' : 'hidden'}>
+        <label class="search">${I.search}
+          <input id="search-q" type="search" data-input="search" placeholder="Search dishes" value="${esc(state.query)}" autocomplete="off" enterkeyhint="search" />
+          <button class="icon-btn sm" data-action="toggle-search" aria-label="Close search">${I.close}</button>
+        </label>
+      </div>`;
   };
-  $tabbar.querySelectorAll('[data-tab]').forEach((a) => {
-    const [label, icon] = TABS[a.dataset.tab];
-    a.innerHTML = `<span class="tab-ico">${icon}</span><span>${label}</span>`;
+
+  let searchOpen = false;
+  A.action('toggle-search', () => {
+    searchOpen = !searchOpen;
+    if (!searchOpen && state.query) { state.query = ''; A.routes[current]?.update?.(); }
+    A.renderHeader();
+    if (searchOpen) {
+      if (current !== '') location.hash = '#/';
+      document.getElementById('search-q')?.focus();
+    }
+  });
+  A.input('search', (el) => {
+    state.query = el.value;
+    if (current !== '') location.hash = '#/';
+    else A.routes['']?.update?.();
+  });
+  A.action('toggle-fulfilment', () => {
+    state.fulfilment = state.fulfilment === 'DELIVERY' ? 'PICKUP' : 'DELIVERY';
+    A.cartChanged();
   });
 
-  let activeTab = '';
-  A.updateChrome = (tab = activeTab) => {
-    activeTab = tab;
-    $tabbar.querySelectorAll('[data-tab]').forEach((a) => a.classList.toggle('active', a.dataset.tab === tab));
+  /* ---------- Footer ---------- */
+  function renderFooter() {
+    const today = A.hoursToday();
+    $footer.innerHTML = `
+      <div class="container foot">
+        <div class="foot-brand">
+          <a class="logo" href="#/"><span class="logo-dot"></span><span>${esc(A.shop.name)}</span></a>
+          ${C.about ? `<p>${esc(C.about)}</p>` : ''}
+          <p class="muted">Cash on delivery or at pickup.</p>
+        </div>
+        <div class="foot-links">
+          <strong>Useful links</strong>
+          <a href="#/">Menu</a>
+          <a href="#/checkout">Cart & checkout</a>
+          <a href="#/orders">My orders</a>
+          <a href="#/help">Help & support</a>
+        </div>
+        <div class="foot-contact">
+          ${C.phone ? `<small class="muted">Call us</small><a class="foot-phone" href="tel:${esc(C.phone.replace(/\s+/g, ''))}">${esc(C.phone)}</a>` : ''}
+          ${today ? `<span>${esc(today)}</span>` : ''}
+          ${C.address ? `<span class="muted">${esc(C.address)}</span>` : ''}
+        </div>
+      </div>
+      <div class="container foot-base">
+        <span>© ${new Date().getFullYear()} ${esc(A.shop.name)}. All rights reserved.</span>
+        <span>Ordering powered by <b>Tiffin</b></span>
+      </div>`;
+  }
+
+  /* ---------- Mobile cart bar ---------- */
+  function renderCartBar() {
     const n = A.cartCount();
-    document.querySelectorAll('[data-cart-count]').forEach((el) => { el.textContent = n; el.hidden = n === 0; });
-    $tabbar.querySelector('[data-tab="cart"] .tab-ico').dataset.count = n || '';
+    const show = n > 0 && current === '' ;
+    $cartBar.hidden = !show;
+    document.body.classList.toggle('has-cart-bar', show);
+    if (!show) return;
+    const q = A.basketNow();
+    $cartBar.innerHTML = `
+      <a class="cart-bar-btn" href="#/checkout">
+        <b class="cart-bar-n">${n}</b><span class="grow">View cart</span><span id="bar-total">${q ? money(q.itemsTotal) : ''}</span>
+      </a>`;
+    if (!q) A.getBasket().then((v) => { const el = document.getElementById('bar-total'); if (el && v) el.textContent = money(v.itemsTotal); }).catch(() => {});
+  }
+
+  A.updateChrome = () => {
+    renderCartBar();
+  };
+
+  // After any cart change: update the page in place when it can, otherwise draw it again
+  A.cartChanged = () => {
+    state.checkoutKey = null;
+    A.save();
+    const route = A.routes[current];
+    if (route?.update) route.update(); else A.refresh();
+    A.renderHeader();
+    A.updateChrome();
   };
 
   /* ---------- Router ---------- */
@@ -33,15 +143,19 @@
   A.setTimer = (fn, ms) => { clearInterval(timer); timer = setInterval(fn, ms); };
   // A page can register something to stop when it is left (e.g. a live status stream)
   A.onLeave = (fn) => { cleanup = fn; };
+  A.current = () => current;
+
+  const ALIASES = { menu: '', cart: 'checkout', track: 'orders', success: 'orders' };
 
   const notFound = {
-    render: () => `<section class="page panel">${A.header('Not found')}${A.empty('🤷', 'Page not found', 'The page you’re looking for doesn’t exist.', { href: '#/', label: 'Go home' })}</section>`,
+    render: () => `<section class="page container">${A.empty('🤷', 'Page not found', 'The page you’re looking for doesn’t exist.', { href: '#/', label: 'Back to the menu' })}</section>`,
   };
 
   A.render = () => {
     clearInterval(timer);
     if (cleanup) { cleanup(); cleanup = null; }
-    const [, name = '', ...rest] = (location.hash.slice(1) || '/').split('/');
+    let [, name = '', ...rest] = (location.hash.slice(1) || '/').split('/');
+    if (name in ALIASES) name = ALIASES[name];
     const param = rest.length ? decodeURIComponent(rest.join('/')) : undefined;
     let route = A.routes[name];
     let html = route ? route.render(param) : null;
@@ -49,10 +163,10 @@
 
     if (current !== name) { A.prevRoute = current; current = name; }
     document.body.dataset.page = name || 'home';
-    document.body.classList.toggle('no-tabbar', !route.tabbar);
     $app.innerHTML = html;
     route.mount?.(param);
-    A.updateChrome(route.tab || '');
+    A.renderHeader();
+    A.updateChrome();
   };
 
   A.refresh = () => {
@@ -63,19 +177,22 @@
 
   /* ---------- Global actions ---------- */
   A.action('back', () => (navCount > 0 ? history.back() : (location.hash = '#/')));
-  A.action('toast', (el) => A.toast(el.dataset.msg));
 
   A.action('add', (el, e) => {
     e.preventDefault();
-    const { id } = el.dataset;
-    A.addToCart(id, 1);
-    A.updateChrome();
-    A.toast(`${A.byId(id).name} added to cart`);
-    el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop');
+    const item = A.byId(el.dataset.id);
+    if (!item) return;
+    if (!A.shop.open) return A.toast(A.shop.reason || 'The restaurant is not taking orders right now');
+    A.addToCart(item.id, 1);
+    A.cartChanged();
+    A.toast(`${item.name} added to cart`);
   });
-  A.action('choose', (el, e) => {
-    e.preventDefault();
-    location.hash = `#/item/${encodeURIComponent(el.dataset.id)}`;
+
+  // Stepper on a product card (dishes without options)
+  A.action('card-qty', (el) => {
+    const id = el.dataset.key;
+    A.setLineQty(`${id}|`, A.qtyOf(id) + Number(el.dataset.d));
+    A.cartChanged();
   });
 
   A.action('fav', (el, e) => {
@@ -83,15 +200,18 @@
     const { id } = el.dataset;
     state.favs.has(id) ? state.favs.delete(id) : state.favs.add(id);
     A.save();
-    A.toast(state.favs.has(id) ? 'Saved to favourites' : 'Removed from favourites');
-    if (current === 'favourites') A.refresh();
-    else document.querySelectorAll('[data-action="fav"]').forEach((b) => { if (b.dataset.id === id) b.classList.toggle('on', state.favs.has(id)); });
+    const on = state.favs.has(id);
+    A.toast(on ? 'Saved to favourites' : 'Removed from favourites');
+    if (current === 'favourites') return A.refresh();
+    document.querySelectorAll(`[data-action="fav"][data-id="${CSS.escape(id)}"]`).forEach((b) => {
+      b.classList.toggle('on', on); b.setAttribute('aria-pressed', on); b.innerHTML = on ? I.heartF : I.heart;
+    });
   });
 
   /* ---------- Event delegation ---------- */
   document.addEventListener('click', (e) => {
     const el = e.target.closest('[data-action]');
-    if (el && A.actions[el.dataset.action]) A.actions[el.dataset.action](el, e);
+    if (el && !el.disabled && A.actions[el.dataset.action]) A.actions[el.dataset.action](el, e);
   });
 
   document.addEventListener('submit', (e) => {
@@ -113,23 +233,22 @@
 
   /* ---------- Start: load the store and its menu from the hub ---------- */
   function showLoadError(err) {
-    document.body.classList.add('no-tabbar');
-    $app.innerHTML = `<section class="page panel">${A.empty('📡', 'Could not load the menu', A.esc(err.message), null)}
+    $app.innerHTML = `<section class="page container">${A.empty('📡', 'Could not load the menu', esc(err.message), null)}
       <div class="center"><button class="btn" data-action="reload">Try again</button></div></section>`;
   }
   A.action('reload', () => location.reload());
 
   async function start() {
-    $app.innerHTML = `<section class="page panel">${A.empty('⏳', 'Loading the menu…', '', null)}</section>`;
+    $app.innerHTML = `<section class="page container"><div class="loading"><span class="spinner"></span><p>Loading the menu…</p></div></section>`;
     try {
       A.setShop(await Hub.store());
     } catch (err) {
       showLoadError(err);
       return;
     }
-    document.title = A.shop.name;
-    document.getElementById('brand-name').textContent = A.shop.name;
-    window.addEventListener('hashchange', () => { navCount++; A.render(); window.scrollTo(0, 0); });
+    document.title = `${A.shop.name} · Order online`;
+    renderFooter();
+    window.addEventListener('hashchange', () => { navCount++; A.closeModal?.(); A.render(); window.scrollTo(0, 0); });
     A.render();
     // Keep "open / closed" and the menu current without disturbing the page being used
     setInterval(async () => {
@@ -138,8 +257,9 @@
         A.setShop(await Hub.store());
         A.clearQuote();
         if (wasOpen !== A.shop.open || version !== A.shop.menu?.version) {
-          if (['', 'menu', 'cart'].includes(current)) A.refresh();
+          if (['', 'checkout'].includes(current) && document.getElementById('modal').hidden) A.refresh();
         }
+        A.renderHeader();
         A.updateChrome();
       } catch { /* try again next time */ }
     }, 60_000);

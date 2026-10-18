@@ -1,196 +1,218 @@
-// Cart and checkout. Totals come from the hub (a quote); the order goes to the hub, which sends it to the restaurant's POS.
+// Checkout: order review, delivery details, mobile verification and payment on one page with a sticky summary.
+// Totals come from the hub (a quote); the order goes to the hub, which sends it to the restaurant's POS (ODS screen).
 (function (A) {
-  const { I, state, esc, money, byId, media, option } = A;
+  const { I, state, esc, money, byId } = A;
+  const C = window.TIFFIN_CONFIG;
+  let addingAddress = false;
+  let lastQuote = null; // the full quote the Place Order button was enabled with
 
-  const lineName = (l) => {
-    const mods = A.modifierNames(l);
-    return mods.length ? `<small class="muted">${esc(mods.join(', '))}</small>` : '';
-  };
-
-  // Fills #quote with the hub's total (or the reason there is none) and enables the button that needs it
-  function showQuote(buttonSelector) {
-    const box = document.getElementById('quote');
-    const btn = document.querySelector(buttonSelector);
-    if (!box) return;
-    box.innerHTML = '<p class="muted">Working out the total…</p>';
-    if (btn) btn.disabled = true;
-    A.getQuote().then((q) => {
-      if (!document.body.contains(box)) return;
-      box.innerHTML = A.summaryRows(q);
-      const price = document.getElementById('cta-price');
-      if (price) price.textContent = money(q.total);
-      if (btn) btn.disabled = !A.shop.open;
-    }).catch((e) => {
-      if (!document.body.contains(box)) return;
-      box.innerHTML = `<p class="err">${esc(e.message)}</p>`;
-      const price = document.getElementById('cta-price');
-      if (price) price.textContent = '';
-      // the cart page can still go on to checkout to fix the address
-      if (btn && buttonSelector === '#to-checkout') btn.disabled = !A.shop.open || e.code !== 'NO_LOCATION';
-    });
-  }
-
-  function fulfilmentChips() {
-    const f = A.shop.fulfilment || {};
-    if (!(f.delivery && f.pickup)) return `<p class="muted">${f.delivery ? 'Delivery only' : 'Pickup only'}</p>`;
-    return `<div class="seg">
-      <button class="${state.fulfilment === 'DELIVERY' ? 'active' : ''}" data-action="set-fulfilment" data-value="DELIVERY">${I.bike} Delivery</button>
-      <button class="${state.fulfilment === 'PICKUP' ? 'active' : ''}" data-action="set-fulfilment" data-value="PICKUP">${I.bag} Pickup</button>
-    </div>`;
-  }
-
-  /* ---------- Cart ---------- */
-  A.route('cart', {
-    tab: 'cart',
-    render() {
-      const head = A.header('Cart', {
-        right: `<button class="icon-btn soft" data-action="clear-cart" aria-label="Clear cart" ${state.cart.length ? '' : 'disabled'}>${I.trash}</button>`,
-      });
-      if (!state.cart.length) {
-        return `<section class="page panel">${head}${A.empty('🛍️', 'Your cart is empty', 'Add something tasty to get started.', { href: '#/menu', label: 'Browse menu' })}</section>`;
-      }
+  function linesHTML() {
+    return state.cart.map((l, i) => {
+      const item = byId(l.itemId);
+      const mods = A.modifierNames(l);
       return `
-        <section class="page panel has-cta">
-          ${head}
-          ${A.shopBanner()}
-          <div class="split">
-            <ul class="cart-list">
-              ${state.cart.map((l, i) => {
-                const item = byId(l.itemId);
-                return `
-                <li class="cart-item">
-                  <a href="#/item/${encodeURIComponent(item.id)}">${media(item, 'thumb')}</a>
-                  <div class="grow">
-                    <div class="ci-top">
-                      <div><h3>${A.vegMark(item)}${esc(item.name)}</h3>${lineName(l)}</div>
-                    </div>
-                    <div class="ci-bottom">
-                      <span class="muted">${money(item.price)}${l.modifierIds.length ? ' + options' : ''} each</span>
-                      <div class="qty">
-                        <button data-action="dec" data-i="${i}" aria-label="Decrease">${I.minus}</button>
-                        <span>${l.qty}</span>
-                        <button class="plus" data-action="inc" data-i="${i}" aria-label="Increase">${I.plus}</button>
-                      </div>
-                    </div>
-                  </div>
-                </li>`;
-              }).join('')}
-            </ul>
-
-            <aside class="summary">
-              ${fulfilmentChips()}
-              <div id="quote"></div>
-              <div class="cta">
-                <span class="cta-price" id="cta-price"></span>
-                <button class="cta-btn" id="to-checkout" data-action="go-checkout" disabled>Checkout</button>
-              </div>
-            </aside>
+        <li class="co-line">
+          ${A.media(item, 'thumb')}
+          <div class="grow">
+            <strong>${esc(item.name)}</strong>
+            <small id="lu-${i}">${mods.length ? esc(mods.join(', ')) + ' · ' : ''}${money(item.price)}</small>
           </div>
-        </section>`;
-    },
-    mount() { if (state.cart.length) showQuote('#to-checkout'); },
-  });
+          ${A.stepper('line-qty', l.key, l.qty, 'sm')}
+          <b class="co-line-total" id="lt-${i}"></b>
+        </li>`;
+    }).join('');
+  }
 
-  const cartChanged = () => { state.checkoutKey = null; A.save(); A.refresh(); };
-  A.action('inc', (el) => { const l = state.cart[el.dataset.i]; l.qty = Math.min(99, l.qty + 1); cartChanged(); });
-  A.action('dec', (el) => {
-    const i = Number(el.dataset.i);
-    if (--state.cart[i].qty <= 0) state.cart.splice(i, 1);
-    cartChanged();
-  });
-  A.action('clear-cart', () => { state.cart = []; cartChanged(); });
-  A.action('set-fulfilment', (el) => { state.fulfilment = el.dataset.value; cartChanged(); });
-  A.action('go-checkout', () => { location.hash = '#/checkout'; });
+  function fulfilmentTiles() {
+    const f = A.shop.fulfilment || {};
+    const z = A.shop.delivery?.zones?.[0];
+    const p = A.shop.pickup;
+    return `
+      <div class="tiles">
+        ${f.delivery ? A.tile({ action: 'set-fulfilment', value: 'DELIVERY', selected: state.fulfilment === 'DELIVERY', icon: I.home, title: 'Delivery', sub: z?.etaMinutes ? `To your door in ≈${z.etaMinutes} min` : 'To your door' }) : ''}
+        ${f.pickup ? A.tile({ action: 'set-fulfilment', value: 'PICKUP', selected: state.fulfilment === 'PICKUP', icon: I.bag, title: 'Pickup', sub: [p?.etaMinutes ? `Ready in ≈${p.etaMinutes} min` : '', C.address].filter(Boolean).join(' · ') || 'Collect from the restaurant' }) : ''}
+      </div>`;
+  }
+
+  // Name + mobile number, verified with a 6-digit code from the hub
+  function contactHTML() {
+    if (A.signedIn()) {
+      return `
+        <div class="fields two">
+          <label class="field"><span>Full name</span><input name="name" data-input="cust-name" value="${esc(state.user.name || '')}" maxlength="60" autocomplete="name" placeholder="Your name" /></label>
+          <div class="field static">
+            <span>Phone</span>
+            <div class="field-row"><b>${esc(state.user.phone)}</b><span class="tag soft green">${I.check} Verified</span><button class="link" data-action="change-number">Change</button></div>
+          </div>
+        </div>`;
+    }
+    const p = A.otp.pending;
+    return `
+      <div class="fields two">
+        <label class="field"><span>Full name</span><input data-input="draft-name" value="${esc(A.otp.draftName)}" maxlength="60" autocomplete="name" placeholder="Your name" /></label>
+        ${p ? `
+          <div class="field static">
+            <span>Phone</span>
+            <div class="field-row"><b>${esc(p.phone)}</b><button class="link" data-action="otp-reset">Change</button></div>
+          </div>` : `
+          <form class="field with-btn" data-form="otp-send">
+            <span>Phone</span>
+            <input name="phone" type="tel" required inputmode="numeric" maxlength="14" placeholder="98765 43210" autocomplete="tel" value="${esc(A.otp.draftPhone)}" data-input="draft-phone" />
+            <button class="btn sm">Send code</button>
+          </form>`}
+      </div>
+      ${p ? `
+        <form class="otp-box" data-form="otp-verify">
+          <p>Enter the 6-digit code sent to <b>${esc(p.phone)}</b>.</p>
+          <div class="field with-btn">
+            <span>Verification code</span>
+            <input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="••••••" autocomplete="one-time-code" />
+            <button class="btn sm">Verify</button>
+          </div>
+          ${p.devCode ? `<p class="notice">${I.help}<span>Test mode: your code is <b>${esc(p.devCode)}</b></span></p>` : ''}
+          <button type="button" class="link small" data-action="otp-resend">Send the code again</button>
+        </form>` : '<p class="muted small">We send a 6-digit code to verify your number. You verify once on this device.</p>'}`;
+  }
+
+  A.contactHTML = contactHTML;
+
+  function addressHTML() {
+    const showForm = addingAddress || !state.addresses.length;
+    return `
+      <div class="addr-block">
+        <div class="sub-head"><h3>Delivery address</h3>${state.addresses.length && !showForm ? '<button class="link" data-action="add-address">+ New address</button>' : ''}</div>
+        ${state.addresses.length ? `<div class="tiles stack">
+          ${state.addresses.map((a) => A.tile({
+            action: 'addr-select', value: a.id, selected: a.isDefault, icon: A.ADDRESS_ICONS[a.label] || I.pin,
+            title: esc(a.label), sub: esc(A.addressText(a)) + (a.lat == null ? ' · <span class="err">no map location</span>' : ''),
+          })).join('')}
+        </div>` : ''}
+        ${showForm ? A.addressForm({ cancel: state.addresses.length > 0 }) : ''}
+      </div>`;
+  }
 
   /* ---------- Checkout ---------- */
   A.route('checkout', {
-    tab: 'cart',
     render() {
-      const head = A.header('Checkout');
       if (!state.cart.length) {
-        return `<section class="page panel">${head}${A.empty('🧾', 'Nothing to check out', 'Your cart is empty.', { href: '#/menu', label: 'Browse menu' })}</section>`;
-      }
-      if (!state.user?.otpToken) {
-        return `<section class="page panel">${head}${A.empty('🔐', 'Verify your mobile number', 'The restaurant needs a verified mobile number for cash orders.', { href: '#/login/checkout', label: 'Sign in' })}</section>`;
+        return `<section class="page container narrow">${A.pageHead('Checkout')}${A.empty('🛍️', 'Your cart is empty', 'Add something tasty to get started.', { href: '#/', label: 'Browse the menu' })}</section>`;
       }
       const delivery = state.fulfilment === 'DELIVERY';
-      const addr = A.defaultAddress();
-      const payLabel = delivery ? 'Cash on delivery' : 'Pay at the counter';
-
+      const n = A.cartCount();
       return `
-        <section class="page panel has-cta">
-          ${head}
+        <section class="page container checkout">
+          ${A.pageHead('Checkout')}
           ${A.shopBanner()}
-          <div class="split">
-            <div class="stack">
-              <section class="box">
-                <div class="box-head"><h2 class="h-sm">How do you want it?</h2></div>
-                ${fulfilmentChips()}
+          <div class="co-layout">
+            <div class="co-main">
+              <section class="card">
+                <div class="card-head"><h2>Your order (${n})</h2><a class="link accent" href="#/">Add more</a></div>
+                <ul class="co-lines">${linesHTML()}</ul>
+                <label class="field note-field">${I.note}<input data-input="note" maxlength="300" placeholder="Note for the kitchen — e.g. less spicy, no onion" value="${esc(state.note)}" /></label>
               </section>
 
-              ${delivery ? `
-              <section class="box">
-                <div class="box-head"><h2 class="h-sm">Delivery address</h2><a class="link strong" href="#/addresses">${addr ? 'Change' : 'Add'}</a></div>
-                ${addr
-                  ? option({ action: 'go-addresses', value: addr.id, selected: true, icon: A.ADDRESS_ICONS[addr.label] || I.pinO, title: esc(addr.label), sub: esc(A.addressText(addr)) })
-                    + (addr.lat == null ? `<p class="err">This address has no map location. Open it and press “Use my current location”.</p>` : '')
-                  : `<a class="btn block ghost" href="#/addresses">Add a delivery address</a>`}
-              </section>` : `
-              <section class="box">
-                <div class="box-head"><h2 class="h-sm">Pickup from</h2></div>
-                <p><strong>${esc(A.shop.name)}</strong></p>
-              </section>`}
+              <section class="card">
+                <div class="card-head"><h2>${delivery ? 'Delivery' : 'Pickup'}</h2></div>
+                ${fulfilmentTiles()}
+                ${contactHTML()}
+                ${delivery ? addressHTML() : `<p class="muted small">Collect from <b>${esc(C.address || A.shop.name)}</b>. We show you when it is ready.</p>`}
+              </section>
 
-              <section class="box">
-                <div class="box-head"><h2 class="h-sm">Payment</h2></div>
-                <div class="options">
-                  ${option({ action: 'noop', value: 'cod', selected: true, icon: I.cash, title: payLabel, sub: delivery ? 'Pay the rider in cash' : 'Pay when you collect' })}
-                  <div class="option disabled"><span class="lr-ico">${I.card}</span><span class="grow"><strong>Online payment</strong><small class="muted">Coming soon</small></span></div>
+              <section class="card">
+                <div class="card-head"><h2>Payment</h2></div>
+                <div class="pay-chips">
+                  <button class="pay-chip on" aria-pressed="true">${I.cash} ${delivery ? 'Cash on delivery' : 'Pay at the counter'}</button>
+                  <button class="pay-chip" disabled>${I.card} UPI / Card <small>Soon</small></button>
                 </div>
               </section>
-
-              <section class="box">
-                <div class="box-head"><h2 class="h-sm">Note for the restaurant</h2></div>
-                <textarea class="input" rows="3" maxlength="300" data-input="note" placeholder="E.g. less spicy, ring the bell…">${esc(state.note)}</textarea>
-              </section>
-
-              <p class="muted small">Ordering as ${esc(state.user.name || '')} · ${esc(state.user.phone)} · <a class="link" href="#/profile">Change</a></p>
             </div>
 
-            <aside class="summary">
-              <h2 class="h-sm">Order summary</h2>
-              <ul class="mini-list">
-                ${state.cart.map((l) => {
-                  const item = byId(l.itemId);
-                  const mods = A.modifierNames(l);
-                  return `<li><span><b>${l.qty}×</b> ${esc(item.name)}${mods.length ? ` <small class="muted">(${esc(mods.join(', '))})</small>` : ''}</span></li>`;
-                }).join('')}
-              </ul>
-              <div id="quote"></div>
-              <p class="err" id="place-err"></p>
-              <div class="cta">
-                <span class="cta-price" id="cta-price"></span>
-                <button class="cta-btn" id="place" data-action="place-order" disabled>Place Order</button>
+            <aside class="co-side">
+              <div class="card summary">
+                <h2>Summary</h2>
+                <dl class="totals" id="totals"><div><dt class="muted">Working out the total…</dt></div></dl>
+                <p class="err small" id="place-err"></p>
+                <button class="btn block lg place-btn" data-action="place-order" disabled>Place Order</button>
+                <p class="fine">${A.signedIn() ? 'Prices include GST. By placing the order you agree to pay on ' + (delivery ? 'delivery.' : 'pickup.') : 'Verify your phone number to place the order.'}</p>
               </div>
             </aside>
           </div>
+          <div class="co-bar">
+            <small id="bar-breakdown"></small>
+            <button class="btn block lg place-btn" data-action="place-order" disabled><span>Place Order</span><b id="bar-total"></b></button>
+          </div>
         </section>`;
     },
-    mount() { if (state.cart.length && state.user?.otpToken) showQuote('#place'); },
+    mount() { if (state.cart.length) price(); },
   });
 
-  A.action('noop', () => {});
-  A.action('go-addresses', () => { location.hash = '#/addresses'; });
+  // Shows the hub's prices: per line, the summary and the totals
+  function fill(q, note) {
+    if (!document.getElementById('totals')) return;
+    state.cart.forEach((l, i) => {
+      const ql = q?.lines?.[i];
+      const lt = document.getElementById(`lt-${i}`);
+      if (lt) lt.textContent = ql ? money(ql.lineTotal) : '';
+    });
+    const rows = [];
+    if (q) {
+      rows.push(['Subtotal', money(q.itemsTotal)]);
+      if (state.fulfilment === 'DELIVERY') rows.push([`Delivery${q.distanceKm != null && !note ? ` (${q.distanceKm} km)` : ''}`, note ? '—' : q.deliveryFee ? money(q.deliveryFee) : 'Free']);
+      if (q.packagingFee) rows.push(['Packaging', money(q.packagingFee)]);
+    }
+    document.getElementById('totals').innerHTML = `
+      ${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}
+      ${q && !note ? `<div class="total"><dt>Total</dt><dd>${money(q.total)}</dd></div>` : ''}
+      ${q?.etaMinutes && !note ? `<div class="eta"><dt>${I.clock} Ready in about ${q.etaMinutes} min after the restaurant accepts</dt></div>` : ''}`;
+    const err = document.getElementById('place-err');
+    err.textContent = note || '';
+    const bar = document.getElementById('bar-breakdown');
+    if (bar) bar.textContent = q ? rows.map(([k, v]) => `${k.replace(/ \(.*\)/, '')} ${v}`).join(' · ') : '';
+    const total = document.getElementById('bar-total');
+    if (total) total.textContent = q && !note ? money(q.total) : '';
+  }
+
+  function setPlaceEnabled(on) {
+    document.querySelectorAll('.place-btn').forEach((b) => { b.disabled = !on; });
+  }
+
+  async function price() {
+    lastQuote = null;
+    setPlaceEnabled(false);
+    try {
+      const q = await A.getQuote();
+      fill(q, null);
+      lastQuote = q;
+      setPlaceEnabled(A.shop.open && A.signedIn());
+    } catch (e) {
+      if (e.code === 'NO_LOCATION') {
+        const b = await A.getBasket().catch(() => null);
+        fill(b, state.addresses.length ? 'This address has no map location. Add it again with “Use my current location”.' : 'Add your delivery address to see the delivery fee.');
+      } else {
+        fill(A.basketNow(), e.message);
+      }
+    }
+  }
+
+  A.action('set-fulfilment', (el) => { state.fulfilment = el.dataset.value; A.cartChanged(); });
+  A.action('add-address', () => { addingAddress = true; A.refresh(); });
+  A.action('addr-cancel', () => { addingAddress = false; A.refresh(); });
+  A.addressSaved = () => { addingAddress = false; };
+
   A.input('note', (el) => { state.note = el.value; });
+  A.input('cust-name', (el) => { state.user = { ...state.user, name: el.value.trim() }; A.save(); });
 
   let placing = false;
-  A.action('place-order', async (el) => {
+  A.action('place-order', async () => {
     if (placing) return;
     const err = document.getElementById('place-err');
     err.textContent = '';
-    placing = true; el.disabled = true; el.textContent = 'Placing…';
+    if (!A.signedIn()) { err.textContent = 'Verify your phone number first.'; return; }
+    const buttons = document.querySelectorAll('.place-btn');
+    placing = true;
+    buttons.forEach((b) => { b.disabled = true; b.classList.add('busy'); });
     try {
-      const quote = await A.getQuote();
+      const quote = lastQuote || await A.getQuote();
       const addr = A.defaultAddress();
       const delivery = state.fulfilment === 'DELIVERY';
       const body = {
@@ -211,20 +233,21 @@
       const r = await Hub.placeOrder(body, state.checkoutKey);
       state.orders = [{ id: r.order.id, token: r.accessToken, order: r.order }, ...state.orders.filter((o) => o.id !== r.order.id)];
       A.notify(`Order ${r.order.number} placed`, `Sent to ${A.shop.name}. Total ${money(r.order.total)}, ${delivery ? 'cash on delivery' : 'pay at pickup'}.`);
-      state.cart = []; state.note = ''; state.checkoutKey = null;
+      state.cart = []; state.note = ''; state.checkoutKey = null; state.justPlaced = r.order.id;
       placing = false;
       A.clearQuote();
       A.save();
-      location.hash = `#/success/${encodeURIComponent(r.order.id)}`;
+      location.hash = `#/orders/${encodeURIComponent(r.order.id)}`;
     } catch (e) {
-      placing = false; el.textContent = 'Place Order';
+      placing = false;
+      buttons.forEach((b) => b.classList.remove('busy'));
       if (['PRICE_CHANGED', 'ITEM_UNAVAILABLE', 'OPTION_INVALID', 'VALIDATION', 'BELOW_MINIMUM', 'OUT_OF_AREA'].includes(e.code)) {
         state.checkoutKey = null; // a changed order is a new order
       }
       if (e.code === 'OTP_REQUIRED') {
         state.user = { ...state.user, otpToken: null }; A.save();
         A.toast(e.message);
-        location.hash = '#/login/checkout';
+        A.refresh();
         return;
       }
       if (e.code === 'PRICE_CHANGED' || e.code === 'ITEM_UNAVAILABLE') {
@@ -234,8 +257,8 @@
         document.getElementById('place-err').textContent = e.message;
         return;
       }
-      err.textContent = e.message;
-      el.disabled = false;
+      document.getElementById('place-err').textContent = e.message;
+      buttons.forEach((b) => { b.disabled = false; });
     }
   });
 })(App);

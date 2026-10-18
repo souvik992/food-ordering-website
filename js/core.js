@@ -29,11 +29,10 @@ window.App = (function () {
     addresses: list(store.get(key('addresses'), [])),
     fulfilment: store.get(key('fulfilment'), 'DELIVERY'),
     notifications: list(store.get(key('notifications'), [])),
-    recent: list(store.get(key('recent'), [])),
-    menu: { query: '', cat: 'all', sort: 'menu' },
+    query: '',
     note: '',
-    ordersTab: 'active',
-    focusSearch: false,
+    ordersFilter: 'all',
+    justPlaced: null, // id of the order placed a moment ago (shows the "sent to the restaurant" banner)
     checkoutKey: null, // idempotency key of the order being placed (a retry reuses it, so no double orders)
   };
 
@@ -45,27 +44,28 @@ window.App = (function () {
     store.set(key('addresses'), state.addresses);
     store.set(key('fulfilment'), state.fulfilment);
     store.set(key('notifications'), state.notifications.slice(0, 50));
-    store.set(key('recent'), state.recent);
   }
 
   /* ---------- Helpers ---------- */
   // Amounts from the hub are in paise; this only formats them
-  const money = (p) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const money = (p) => '₹' + (p / 100).toLocaleString('en-IN', { minimumFractionDigits: p % 100 ? 2 : 0, maximumFractionDigits: 2 });
   const byId = (id) => ITEMS.find((i) => i.id === String(id));
   const cartCount = () => state.cart.reduce((a, l) => a + l.qty, 0);
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const fmtDate = (t) => new Date(t).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const fmtDate = (t) => `${new Date(t).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}, ${fmtTime(t)}`;
+  const fmtTime = (t) => new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
   const defaultAddress = () => state.addresses.find((a) => a.isDefault) || state.addresses[0] || null;
   const addressText = (a) => [a.line1, a.line2, a.landmark, a.city, a.pincode].filter(Boolean).join(', ');
   const unreadCount = () => state.notifications.filter((n) => !n.read).length;
   const notify = (title, text) => { state.notifications.unshift({ id: Date.now() + Math.random(), title, text, date: Date.now(), read: false }); };
+  const signedIn = () => Boolean(state.user?.otpToken);
 
-  // Photo if one is set in js/config.js, otherwise the emoji
+  // Photo (from the POS through the hub, or js/config.js), otherwise the emoji on a warm tile
   const media = (item, cls = '') =>
     `<div class="media ${cls}" data-emoji="${item.emoji}">
-       ${item.image ? `<img src="${esc(item.image)}" alt="${esc(item.name)}" loading="lazy" onerror="this.remove()">` : ''}
+       ${item.image ? `<img src="${esc(item.image)}" alt="" loading="lazy" onerror="this.remove()">` : ''}
      </div>`;
-  const vegMark = (item) => (item.isVeg == null ? '' : `<span class="veg ${item.isVeg ? '' : 'non'}" title="${item.isVeg ? 'Veg' : 'Non-veg'}" aria-label="${item.isVeg ? 'Veg' : 'Non-veg'}"></span>`);
+  const vegTag = (item) => (item.isVeg == null ? '' : `<span class="tag ${item.isVeg ? 'green' : 'red'}">${item.isVeg ? 'Veg' : 'Non-veg'}</span>`);
 
   /* ---------- Menu from the hub ---------- */
   const emojiFor = (...names) => (EMOJI_RULES.find(([re]) => names.some((n) => re.test(n || ''))) || [, '🍽️'])[1];
@@ -75,16 +75,16 @@ window.App = (function () {
     A.shop = shop;
     const cats = shop.menu ? [...shop.menu.categories].sort((a, b) => a.sort - b.sort) : [];
     const catName = new Map(cats.map((c) => [c.id, c.name]));
-    window.CATEGORIES = [{ id: 'all', name: 'All', emoji: '🍽️' }]
-      .concat(cats.filter((c) => shop.menu.items.some((i) => i.categoryId === c.id)).map((c) => ({ id: c.id, name: c.name, emoji: emojiFor(c.name) })));
+    window.CATEGORIES = cats.filter((c) => shop.menu.items.some((i) => i.categoryId === c.id))
+      .map((c) => ({ id: c.id, name: c.name, emoji: emojiFor(c.name) }));
     const order = new Map(cats.map((c, i) => [c.id, i]));
     window.ITEMS = (shop.menu?.items || []).map((i, n) => ({
       ...i,
       category: catName.get(i.categoryId) || 'More',
       emoji: emojiFor(i.name, catName.get(i.categoryId)),
-      image: ITEM_PHOTOS[i.id] || null,
+      image: i.image ? Hub.imageUrl(i.image) : ITEM_PHOTOS[i.id] || null,
       sort: (order.get(i.categoryId) ?? 999) * 10000 + n,
-    }));
+    })).sort((a, b) => a.sort - b.sort);
     // drop cart lines for items that left the menu
     const before = state.cart.length;
     state.cart = state.cart.filter((l) => byId(l.itemId));
@@ -93,6 +93,24 @@ window.App = (function () {
     const f = shop.fulfilment || {};
     if (state.fulfilment === 'DELIVERY' && !f.delivery && f.pickup) state.fulfilment = 'PICKUP';
     if (state.fulfilment === 'PICKUP' && !f.pickup && f.delivery) state.fulfilment = 'DELIVERY';
+  }
+
+  // Minutes the kitchen usually needs for the chosen way of ordering
+  function etaMinutes() {
+    const s = A.shop;
+    if (!s?.menu) return null;
+    if (state.fulfilment === 'PICKUP') return s.pickup?.etaMinutes ?? null;
+    return s.delivery?.zones?.[0]?.etaMinutes ?? null;
+  }
+
+  // "Open today until 11:00 PM" from the opening hours set in the POS (0 = Sunday)
+  function hoursToday() {
+    const slots = A.shop?.hours?.[String(new Date().getDay())];
+    if (!slots) return null;
+    if (!slots.length) return 'Closed today';
+    const [h, m] = slots[slots.length - 1].close.split(':').map(Number);
+    const d = new Date(); d.setHours(h, m, 0, 0);
+    return `Open today until ${fmtTime(d)}`;
   }
 
   const modifierGroups = (item) => item.modifierGroupIds.map((id) => A.shop.menu.modifierGroups.find((g) => g.id === id)).filter(Boolean);
@@ -110,43 +128,63 @@ window.App = (function () {
     state.checkoutKey = null;
     save();
   }
+  // Changes the quantity of a cart line; 0 removes it
+  function setLineQty(lineKey, qty) {
+    const i = state.cart.findIndex((l) => l.key === lineKey);
+    if (i < 0) return;
+    if (qty <= 0) state.cart.splice(i, 1);
+    else state.cart[i].qty = Math.min(99, qty);
+    state.checkoutKey = null;
+    save();
+  }
+  // How many of a dish are in the cart (all option combinations)
+  const qtyOf = (itemId) => state.cart.filter((l) => l.itemId === itemId).reduce((a, l) => a + l.qty, 0);
 
   // Lines in the shape the hub expects
   const hubLines = () => state.cart.map((l) => ({ itemId: l.itemId, qtyMilli: l.qty * 1000, modifierIds: l.modifierIds }));
 
   /* ---------- Totals: always a quote from the hub ---------- */
-  let quoteCache = { key: '', promise: null };
+  const quotes = new Map(); // request -> { promise, value }
+  function ask(req) {
+    const k = JSON.stringify(req);
+    let q = quotes.get(k);
+    if (!q) {
+      q = { promise: null, value: null };
+      q.promise = Hub.quote(req).then((v) => { q.value = v; return v; }).catch((e) => { quotes.delete(k); throw e; });
+      quotes.set(k, q);
+      if (quotes.size > 30) quotes.delete(quotes.keys().next().value);
+    }
+    return q;
+  }
   function quoteRequest() {
     const addr = defaultAddress();
     const delivery = state.fulfilment === 'DELIVERY';
     return { fulfilment: state.fulfilment, location: delivery && addr && addr.lat != null ? { lat: addr.lat, lng: addr.lng } : null, lines: hubLines() };
   }
+  // The full quote for placing the order (needs the delivery location)
   function getQuote() {
     const req = quoteRequest();
     if (req.fulfilment === 'DELIVERY' && !req.location) return Promise.reject(Object.assign(new Error('Add a delivery address with its location to see the delivery fee.'), { code: 'NO_LOCATION' }));
-    const k = JSON.stringify(req);
-    if (quoteCache.key !== k) quoteCache = { key: k, promise: Hub.quote(req).catch((e) => { quoteCache = { key: '', promise: null }; throw e; }) };
-    return quoteCache.promise;
+    return ask(req).promise;
   }
-  const clearQuote = () => { quoteCache = { key: '', promise: null }; };
-
-  function summaryRows(q) {
-    return `
-      <dl class="totals">
-        <div><dt>Items</dt><dd>${money(q.itemsTotal)}</dd></div>
-        ${q.deliveryFee ? `<div><dt>Delivery fee${q.distanceKm != null ? ` (${q.distanceKm} km)` : ''}</dt><dd>${money(q.deliveryFee)}</dd></div>` : ''}
-        ${q.packagingFee ? `<div><dt>Packaging</dt><dd>${money(q.packagingFee)}</dd></div>` : ''}
-        <div class="total"><dt>Total</dt><dd>${money(q.total)}</dd></div>
-      </dl>
-      <p class="muted small">Prices include GST.${q.etaMinutes ? ` Ready in about ${q.etaMinutes} min after the restaurant accepts.` : ''}</p>`;
+  // Line prices and subtotal for the cart. Item prices do not depend on how the food is collected,
+  // so without a delivery location this prices the cart as a pickup (when the store offers pickup).
+  function basketRequest() {
+    const req = quoteRequest();
+    if (req.fulfilment === 'DELIVERY' && !req.location && A.shop.fulfilment?.pickup) return { ...req, fulfilment: 'PICKUP' };
+    return req;
   }
+  const getBasket = () => (state.cart.length ? ask(basketRequest()).promise : Promise.resolve(null));
+  // The last basket price, if it is already known for the cart as it is now
+  const basketNow = () => (state.cart.length ? quotes.get(JSON.stringify(basketRequest()))?.value || null : null);
+  const clearQuote = () => quotes.clear();
 
   const $toast = document.getElementById('toast');
   function toast(msg) {
     $toast.textContent = msg;
     $toast.classList.add('show');
     clearTimeout(toast.t);
-    toast.t = setTimeout(() => $toast.classList.remove('show'), 2600);
+    toast.t = setTimeout(() => $toast.classList.remove('show'), 2800);
   }
 
   /* ---------- Orders (status comes from the hub) ---------- */
@@ -156,15 +194,19 @@ window.App = (function () {
     const rec = state.orders.find((r) => r.id === order.id);
     if (!rec) return false;
     const changed = rec.order.state !== order.state || JSON.stringify(rec.order) !== JSON.stringify(order);
-    if (rec.order.state !== order.state) notify(`Order ${order.number}: ${STATUS[order.state]}`, statusText(order));
+    if (rec.order.state !== order.state) {
+      notify(`Order ${order.number}: ${STATUS[order.state]}`, statusText(order));
+      // when each step happened, for the status timeline
+      rec.times = { ...rec.times, [order.state]: order.updatedAt || Date.now() };
+    }
     rec.order = order;
     if (changed) save();
     return changed;
   }
   function statusText(o) {
     switch (o.state) {
-      case 'SENT_TO_STORE': case 'RECEIVED': return 'Waiting for the restaurant to accept your order.';
-      case 'ACCEPTED': case 'PREPARING': return o.etaAt ? `Your food will be ready at about ${new Date(o.etaAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : 'The restaurant is preparing your order.';
+      case 'PLACED': case 'SENT_TO_STORE': case 'RECEIVED': return 'Waiting for the restaurant to accept your order.';
+      case 'ACCEPTED': case 'PREPARING': return o.etaAt ? `Your food will be ready at about ${fmtTime(o.etaAt)}.` : 'The restaurant is preparing your order.';
       case 'READY': return o.fulfilment === 'PICKUP' ? 'Your order is ready to collect.' : 'Your order is ready and will leave soon.';
       case 'OUT_FOR_DELIVERY': return o.rider ? `${o.rider.name} is on the way.` : 'Your order is on the way.';
       case 'DELIVERED': return 'Delivered. Enjoy your meal!';
@@ -174,147 +216,169 @@ window.App = (function () {
       default: return STATUS[o.state] || o.state;
     }
   }
+  const failed = (o) => ['REJECTED', 'AUTO_REJECTED', 'CANCELLED', 'PAYMENT_FAILED'].includes(o.state);
+  // Status tag colours from the design: in progress (orange), delivered (green), cancelled (grey)
+  function statusTag(o) {
+    const cls = failed(o) ? 'grey' : FINAL_STATES.includes(o.state) ? 'green' : 'orange';
+    const text = failed(o) ? STATUS[o.state] : FINAL_STATES.includes(o.state) ? STATUS[o.state] : 'In progress';
+    return `<span class="tag soft ${cls}">${esc(text)}</span>`;
+  }
 
   /* ---------- Icons ---------- */
-  const stroke = (d, w = 2) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-  const fill = (d) => `<svg viewBox="0 0 24 24" fill="currentColor">${d}</svg>`;
+  const stroke = (d, w = 1.9) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${w}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+  const fill = (d) => `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${d}</svg>`;
   const I = {
-    pin: fill('<path d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6.5a2.5 2.5 0 0 1 0 5Z"/>'),
-    pinO: stroke('<path d="M12 21s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="9" r="2.5"/>'),
-    chevDown: stroke('<path d="m6 9 6 6 6-6"/>', 2.2),
-    chevRight: stroke('<path d="m9 6 6 6-6 6"/>', 2.2),
-    back: stroke('<path d="m15 18-6-6 6-6"/>', 2.2),
-    bag: fill('<path d="M7 7V6a5 5 0 0 1 10 0v1h2.2a1 1 0 0 1 1 .9l1.1 12A2 2 0 0 1 19.3 22H4.7a2 2 0 0 1-2-2.1l1.1-12a1 1 0 0 1 1-.9H7Zm2 0h6V6a3 3 0 0 0-6 0v1Z"/>'),
+    pin: stroke('<path d="M12 21s7-6.5 7-12a7 7 0 0 0-14 0c0 5.5 7 12 7 12Z"/><circle cx="12" cy="9" r="2.5"/>'),
+    nav: stroke('<path d="M3 11 21 3l-8 18-2-8-8-2Z"/>'),
+    chevDown: stroke('<path d="m6 9 6 6 6-6"/>', 2),
+    chevRight: stroke('<path d="m9 6 6 6-6 6"/>', 2),
+    back: stroke('<path d="m15 18-6-6 6-6"/>', 2),
+    close: stroke('<path d="M6 6l12 12M18 6 6 18"/>', 2),
+    bag: stroke('<path d="M6 7h12l1 13H5L6 7Z"/><path d="M9 10V6a3 3 0 0 1 6 0v4"/>'),
     search: stroke('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>'),
-    filter: stroke('<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>'),
     heart: stroke('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10Z"/>'),
-    share: stroke('<circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.4M8.2 13.2l7.6 4.4"/>'),
-    star: fill('<path d="m12 2.5 2.9 6 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.2 1.3-6.6L2.5 9.3l6.6-.8L12 2.5Z"/>'),
+    heartF: fill('<path d="M12 20.5s-7.5-4.6-7.5-10.6A4.3 4.3 0 0 1 12 7a4.3 4.3 0 0 1 7.5 2.9c0 6-7.5 10.6-7.5 10.6Z"/>'),
     clock: stroke('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>'),
-    arrow: stroke('<path d="M7 17 17 7M8 7h9v9"/>', 2.2),
-    arrowRight: stroke('<path d="M5 12h14M13 6l6 6-6 6"/>', 2.2),
-    chat: fill('<path d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-4 4v-4H4a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Zm4 6.5a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Zm4 0a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Zm4 0a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4Z"/>'),
-    phone: fill('<path d="M6.6 10.8a15.5 15.5 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1c0 1.25.2 2.45.57 3.57a1 1 0 0 1-.25 1L6.6 10.8Z"/>'),
+    arrowRight: stroke('<path d="M5 12h14M13 6l6 6-6 6"/>', 2),
+    phone: stroke('<path d="M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z"/>'),
     bike: stroke('<circle cx="5.5" cy="17" r="3.5"/><circle cx="18.5" cy="17" r="3.5"/><path d="M15 6h2l3 11M5.5 17 9 9h6l-3.5 8M9 9 7.5 6H6"/>'),
-    box: stroke('<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9L12 3Z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>'),
     pot: stroke('<path d="M4 10h16v5a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5v-5ZM2 10h20M9 4c0 1.5 1 1.5 1 3M14 4c0 1.5 1 1.5 1 3"/>'),
-    minus: stroke('<path d="M6 12h12"/>', 2.4),
-    plus: stroke('<path d="M12 6v12M6 12h12"/>', 2.4),
-    ticket: fill('<path d="M3 6a1 1 0 0 1 1-1h16a1 1 0 0 1 1 1v3a3 3 0 0 0 0 6v3a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-3a3 3 0 0 0 0-6V6Zm7 1v2h2V7h-2Zm0 4v2h2v-2h-2Zm0 4v2h2v-2h-2Z"/>'),
+    chef: stroke('<path d="M7 14a4 4 0 1 1 1.5-7.7A4 4 0 0 1 15.5 6.3 4 4 0 1 1 17 14v6H7v-6Z"/><path d="M7 17h10"/>'),
+    minus: stroke('<path d="M6 12h12"/>', 2.2),
+    plus: stroke('<path d="M12 6v12M6 12h12"/>', 2.2),
     trash: stroke('<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>'),
-    home: fill('<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5Z"/>'),
-    homeO: stroke('<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5Z"/>'),
-    grid: fill('<rect x="3" y="3" width="8" height="8" rx="2.5"/><rect x="13" y="3" width="8" height="8" rx="2.5"/><rect x="3" y="13" width="8" height="8" rx="2.5"/><rect x="13" y="13" width="8" height="8" rx="2.5"/>'),
-    orders: fill('<path d="M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm2 5v2h8V7H8Zm0 4v2h8v-2H8Zm0 4v2h5v-2H8Z"/>'),
-    ordersO: stroke('<rect x="4" y="2" width="16" height="20" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/>'),
-    user: fill('<circle cx="12" cy="7.5" r="4.5"/><path d="M3.5 21a8.5 8.5 0 0 1 17 0H3.5Z"/>'),
-    check: stroke('<path d="m5 12.5 4.5 4.5L19 7.5"/>', 2.6),
-    card: stroke('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>'),
+    home: stroke('<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1v-9.5Z"/>'),
+    store: stroke('<path d="M4 9h16l-1.5-5h-13L4 9Zm0 0v11h16V9M9 20v-6h6v6"/>'),
+    orders: stroke('<rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/>'),
+    user: stroke('<circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/>'),
+    check: stroke('<path d="m5 12.5 4.5 4.5L19 7.5"/>', 2.4),
     cash: stroke('<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/>'),
-    wallet: stroke('<path d="M17 7V5H5a2 2 0 0 0 0 4"/><rect x="3" y="7" width="18" height="13" rx="2"/><circle cx="16" cy="13.5" r="1.4"/>'),
+    card: stroke('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18M7 15h4"/>'),
     bell: stroke('<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4l2-2Z"/><path d="M10 21a2 2 0 0 0 4 0"/>'),
     help: stroke('<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.4M12 17h.01"/>'),
     edit: stroke('<path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m14 6 4 4"/>'),
     logout: stroke('<path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l-5-5 5-5M5 12h11"/>'),
     work: stroke('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>'),
-    calendar: stroke('<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>'),
-    sort: stroke('<path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4"/>'),
-    mail: stroke('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>'),
     note: stroke('<path d="M5 4h14v16H5zM9 9h6M9 13h6M9 17h3"/>'),
+    reorder: stroke('<path d="M20 11a8 8 0 0 0-14.9-3.9M4 4v4h4M4 13a8 8 0 0 0 14.9 3.9M20 20v-4h-4"/>'),
+    locate: stroke('<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/><circle cx="12" cy="12" r="7"/>'),
+    shield: stroke('<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6l-8-3Z"/><path d="m9 12 2 2 4-4"/>'),
   };
-
-  const PAYMENT_ICONS = { card: I.card, wallet: I.wallet, cash: I.cash };
-  const ADDRESS_ICONS = { Home: I.homeO, Work: I.work, Other: I.pinO };
+  const ADDRESS_ICONS = { Home: I.home, Work: I.work, Other: I.pin };
 
   /* ---------- Shared UI components ---------- */
-  function header(title, { back = true, right = '' } = {}) {
-    return `
-      <header class="bar">
-        ${back ? `<button class="icon-btn soft" data-action="back" aria-label="Back">${I.back}</button>` : '<span></span>'}
-        <h1>${title}</h1>
-        ${right || '<span></span>'}
-      </header>`;
+  // Quantity stepper: [−] n [+]
+  const stepper = (action, keyAttr, qty, size = '') => `
+    <div class="stepper ${size}">
+      <button data-action="${action}" data-key="${esc(keyAttr)}" data-d="-1" aria-label="One less">${I.minus}</button>
+      <span>${qty}</span>
+      <button data-action="${action}" data-key="${esc(keyAttr)}" data-d="1" aria-label="One more">${I.plus}</button>
+    </div>`;
+
+  // The card's price row: "Add", or a stepper once the dish is in the cart (dishes with options open their options)
+  function cardFoot(item) {
+    const q = qtyOf(item.id);
+    const simple = !item.modifierGroupIds.length;
+    let right;
+    if (!A.shop.open) right = '';
+    else if (q && simple) right = stepper('card-qty', item.id, q, 'sm');
+    else right = `<button class="btn sm" data-action="${simple ? 'add' : 'choose'}" data-id="${esc(item.id)}">${q ? `Add more · ${q}` : 'Add'}</button>`;
+    return `<strong class="price">${money(item.price)}</strong>${right}`;
   }
 
-  const cartButton = () =>
-    `<a class="icon-btn soft" href="#/cart" aria-label="Cart">${I.bag}<b class="badge" data-cart-count></b></a>`;
+  // Product card (menu)
+  function cardHTML(item) {
+    const fav = state.favs.has(item.id);
+    return `
+      <article class="pcard" data-item="${esc(item.id)}">
+        <button class="pcard-media" data-action="choose" data-id="${esc(item.id)}" aria-label="${esc(item.name)}">
+          ${media(item)}
+          ${vegTag(item)}
+        </button>
+        <button class="fav ${fav ? 'on' : ''}" data-action="fav" data-id="${esc(item.id)}" aria-label="Favourite" aria-pressed="${fav}">${fav ? I.heartF : I.heart}</button>
+        <div class="pcard-body">
+          <div class="pcard-title"><h3>${esc(item.name)}</h3>${item.modifierGroupIds.length ? '<small>Options</small>' : ''}</div>
+          ${item.description ? `<p class="pcard-desc">${esc(item.description)}</p>` : ''}
+          <div class="pcard-foot" data-foot="${esc(item.id)}">${cardFoot(item)}</div>
+        </div>
+      </article>`;
+  }
 
   function empty(emoji, title, text, cta) {
     return `
-      <div class="empty big">
-        <span>${emoji}</span>
+      <div class="empty">
+        <span class="empty-ico">${emoji}</span>
         <h2>${title}</h2>
         ${text ? `<p>${text}</p>` : ''}
         ${cta ? `<a class="btn" href="${cta.href}">${cta.label}</a>` : ''}
       </div>`;
   }
 
-  // Items with options open their page instead of going straight into the cart
-  const addAttrs = (item) => (item.modifierGroupIds.length ? `data-action="choose" data-id="${esc(item.id)}"` : `data-action="add" data-id="${esc(item.id)}"`);
-
-  // Large photo card (home, favourites)
-  function cardHTML(item) {
-    const fav = state.favs.has(item.id);
+  // Selection tile (Delivery / Pickup, saved address)
+  function tile({ action, value, selected, icon, title, sub, disabled = false, extra = '' }) {
     return `
-      <article class="card">
-        <a class="card-link" href="#/item/${encodeURIComponent(item.id)}" aria-label="${esc(item.name)}"></a>
-        ${media(item, 'card-img')}
-        <button class="icon-btn fav ${fav ? 'on' : ''}" data-action="fav" data-id="${esc(item.id)}" aria-label="Favourite">${I.heart}</button>
-        <div class="card-body">
-          <div>
-            <h3>${vegMark(item)}${esc(item.name)}</h3>
-            <p class="meta">${money(item.price)} · ${esc(item.category)}${item.modifierGroupIds.length ? ' · options' : ''}</p>
-          </div>
-          <button class="round-btn" ${addAttrs(item)} aria-label="Add ${esc(item.name)} to cart">${I.arrow}</button>
-        </div>
-      </article>`;
+      <div class="tile ${selected ? 'selected' : ''} ${disabled ? 'disabled' : ''}">
+        <button class="tile-hit" data-action="${action}" data-value="${esc(value)}" aria-pressed="${selected}" ${disabled ? 'disabled' : ''}></button>
+        <span class="tile-ico">${icon}</span>
+        <span class="grow"><strong>${title}</strong>${sub ? `<small>${sub}</small>` : ''}</span>
+        ${extra}
+      </div>`;
   }
 
-  // Compact row card (menu, search results), styled like cart rows
-  function rowHTML(item) {
+  // Segmented status timeline: steps = [{ label, at }] ; current = index reached
+  function timeline(steps, current, done) {
     return `
-      <article class="row-card">
-        <a class="card-link" href="#/item/${encodeURIComponent(item.id)}" aria-label="${esc(item.name)}"></a>
-        ${media(item, 'thumb')}
-        <div class="grow">
-          <div class="ci-top">
-            <div><h3>${vegMark(item)}${esc(item.name)}</h3><p class="muted">${esc(item.category)}</p></div>
-          </div>
-          <div class="ci-bottom">
-            <div><strong>${money(item.price)}</strong>${item.modifierGroupIds.length ? ' <small class="muted">· options</small>' : ''}</div>
-            <button class="add-btn" ${addAttrs(item)} aria-label="Add ${esc(item.name)} to cart">${I.plus}</button>
-          </div>
-        </div>
-      </article>`;
+      <ol class="timeline" style="--n:${steps.length}">
+        ${steps.map((s, i) => {
+          const cls = i < current || (done && i === current) ? 'done' : i === current ? 'current' : '';
+          return `<li class="${cls}"><span class="bar"></span><span class="dot"></span><strong>${esc(s.label)}</strong><small>${s.at ? esc(s.at) : ''}</small></li>`;
+        }).join('')}
+      </ol>`;
   }
 
   // Banner when the restaurant is not taking orders
-  const shopBanner = () => (A.shop && !A.shop.open ? `<div class="banner">${I.clock}<span>${esc(A.shop.reason || 'The restaurant is not taking online orders right now.')}</span></div>` : '');
+  const shopBanner = () => (A.shop && !A.shop.open ? `<div class="notice warn">${I.clock}<span>${esc(A.shop.reason || 'The restaurant is not taking online orders right now.')}</span></div>` : '');
 
-  // Settings-style list row
-  function listRow({ href, action, icon, title, sub, right = '', danger = false, attrs = '' }) {
-    const inner = `
-      <span class="lr-ico">${icon}</span>
-      <span class="grow"><strong>${title}</strong>${sub ? `<small class="muted">${sub}</small>` : ''}</span>
-      ${right}
-      ${danger ? '' : `<span class="lr-chev">${I.chevRight}</span>`}`;
-    const cls = `list-row ${danger ? 'danger' : ''}`;
-    return href
-      ? `<a class="${cls}" href="${href}" ${attrs}>${inner}</a>`
-      : `<button class="${cls}" data-action="${action}" ${attrs}>${inner}</button>`;
-  }
+  const initials = (name) => (name || '?').split(' ').filter(Boolean).map((s) => s[0]).slice(0, 2).join('').toUpperCase();
 
-  // Selectable option card (address, payment, delivery time)
-  function option({ action, value, selected, icon, title, sub, extra = '' }) {
+  // Account pages: side menu on desktop (the account page itself is this menu on mobile)
+  function accountNav(active) {
+    const u = signedIn() ? state.user : null;
+    const row = (href, icon, label, key, right = '') => `
+      <a class="side-row ${active === key ? 'active' : ''}" href="${href}">
+        <span class="side-ico ${key}">${icon}</span><span class="grow">${label}</span>${right}<span class="chev">${I.chevRight}</span>
+      </a>`;
+    const unread = unreadCount();
     return `
-      <div class="option ${selected ? 'selected' : ''}">
-        <button class="option-hit" data-action="${action}" data-value="${value}" aria-pressed="${selected}"></button>
-        <span class="lr-ico">${icon}</span>
-        <span class="grow"><strong>${title}</strong>${sub ? `<small class="muted">${sub}</small>` : ''}</span>
-        ${extra}
-        <span class="radio" aria-hidden="true">${I.check}</span>
-      </div>`;
+      <aside class="side">
+        <a class="side-profile" href="${u ? '#/account' : '#/login/account'}">
+          <span class="avatar">${u ? initials(u.name || u.phone) : I.user}</span>
+          <span class="grow"><strong>${u ? esc(u.name || 'Add your name') : 'Sign in'}</strong><small>${u ? esc(u.phone) : 'Verify your mobile number'}</small></span>
+          <span class="edit">${u ? I.edit : I.chevRight}</span>
+        </a>
+        <nav class="side-menu">
+          ${row('#/orders', I.orders, 'Orders', 'orders', state.orders.some(isActive) ? '<b class="count">' + state.orders.filter(isActive).length + '</b>' : '')}
+          ${row('#/favourites', I.heart, 'Favourites', 'favourites')}
+          ${row('#/addresses', I.pin, 'Addresses', 'addresses')}
+          ${row('#/notifications', I.bell, 'Notifications', 'notifications', unread ? `<b class="count">${unread}</b>` : '')}
+          ${row('#/help', I.help, 'Help & support', 'help')}
+          ${u ? `<button class="side-row" data-action="logout"><span class="side-ico logout">${I.logout}</span><span class="grow">Log out</span><span class="chev">${I.chevRight}</span></button>` : ''}
+        </nav>
+      </aside>`;
   }
+  // Two-column account layout
+  const accountPage = (active, body, cls = '') => `
+    <section class="page container account-layout ${cls}">
+      ${accountNav(active)}
+      <div class="account-main">${body}</div>
+    </section>`;
+
+  const pageHead = (title, { back = true, right = '' } = {}) => `
+    <div class="page-head">
+      ${back ? `<button class="icon-btn" data-action="back" aria-label="Back">${I.back}</button>` : ''}
+      <h1>${title}</h1>
+      ${right}
+    </div>`;
 
   /* ---------- Registry used by page files ---------- */
   const routes = {};
@@ -323,11 +387,12 @@ window.App = (function () {
   const inputs = {};
 
   Object.assign(A, {
-    store, state, save, money, byId, cartCount, esc, fmtDate, media, vegMark, toast, notify,
-    defaultAddress, addressText, unreadCount, I, PAYMENT_ICONS, ADDRESS_ICONS,
-    setShop, modifierGroups, modifierNames, addToCart, hubLines, getQuote, clearQuote, summaryRows,
-    isActive, updateOrder, statusText,
-    header, cartButton, empty, cardHTML, rowHTML, listRow, option, shopBanner,
+    store, state, save, money, byId, cartCount, esc, fmtDate, fmtTime, media, vegTag, toast, notify,
+    defaultAddress, addressText, unreadCount, signedIn, I, ADDRESS_ICONS, initials,
+    setShop, etaMinutes, hoursToday, modifierGroups, modifierNames, addToCart, setLineQty, qtyOf, hubLines,
+    getQuote, getBasket, basketNow, clearQuote,
+    isActive, updateOrder, statusText, failed, statusTag,
+    stepper, cardFoot, cardHTML, empty, tile, timeline, shopBanner, accountNav, accountPage, pageHead,
     routes, actions, forms, inputs,
     route: (name, def) => { routes[name] = def; },
     action: (name, fn) => { actions[name] = fn; },
