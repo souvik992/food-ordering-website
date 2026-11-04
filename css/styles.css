@@ -110,6 +110,8 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 .demo-banner.back .demo-ico { background: var(--green-fg); }
 .demo-banner .btn { flex-shrink: 0; background: #fff; }
 .foot-base a { color: var(--body); text-decoration: underline; }
+.announce { background: var(--primary); color: #fff; font-size: 13px; font-weight: 600; text-align: center; }
+.announce .container { padding-top: 8px; padding-bottom: 8px; overflow-wrap: anywhere; }
 
 /* ---------- Header ---------- */
 .site-header { position: sticky; top: 0; z-index: 40; background: rgba(255, 255, 255, .94); backdrop-filter: saturate(1.4) blur(12px); border-bottom: 1px solid var(--border); }
