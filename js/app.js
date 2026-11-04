@@ -41,7 +41,7 @@
   A.renderHeader = () => {
     $header.innerHTML = `
       <div class="container hdr">
-        <a class="logo" href="#/"><span class="logo-dot"></span><span>${esc(A.shop.name)}</span></a>
+        <a class="logo" href="#/">${A.logoHTML()}</a>
         <div class="hdr-ctx">${contextPill()}${kitchenPill()}</div>
         <div class="hdr-actions">
           <button class="icon-btn" data-action="toggle-search" aria-label="Search the menu">${I.search}</button>
@@ -79,11 +79,13 @@
 
   /* ---------- Footer ---------- */
   function renderFooter() {
+    if (!A.shop) return;
     const today = A.hoursToday();
     $footer.innerHTML = `
       <div class="container foot">
         <div class="foot-brand">
-          <a class="logo" href="#/"><span class="logo-dot"></span><span>${esc(A.shop.name)}</span></a>
+          <a class="logo" href="#/">${A.logoHTML()}</a>
+          ${A.site.brand.tagline ? `<p><b>${esc(A.site.brand.tagline)}</b></p>` : ''}
           ${C.about ? `<p>${esc(C.about)}</p>` : ''}
           <p class="muted">Cash on delivery or at pickup.</p>
         </div>
@@ -98,13 +100,18 @@
           ${C.phone ? `<small class="muted">Call us</small><a class="foot-phone" href="tel:${esc(C.phone.replace(/\s+/g, ''))}">${esc(C.phone)}</a>` : ''}
           ${today ? `<span>${esc(today)}</span>` : ''}
           ${C.address ? `<span class="muted">${esc(C.address)}</span>` : ''}
+          ${A.site.contact.whatsapp ? `<a href="https://wa.me/${esc(A.site.contact.whatsapp.replace(/D/g, '').replace(/^(d{10})$/, '91$1'))}" target="_blank" rel="noopener">WhatsApp us</a>` : ''}
+          ${A.site.contact.email ? `<a href="mailto:${esc(A.site.contact.email)}">${esc(A.site.contact.email)}</a>` : ''}
+          ${A.socialHTML()}
         </div>
       </div>
       <div class="container foot-base">
-        <span>© ${new Date().getFullYear()} ${esc(A.shop.name)}. All rights reserved.${A.demo ? ' · <a href="images/demo/CREDITS.md" target="_blank" rel="noopener">Demo photo credits</a>' : ''}</span>
+        <span>© ${new Date().getFullYear()} ${esc(A.brandName())}. All rights reserved.${A.demo ? ' · <a href="images/demo/CREDITS.md" target="_blank" rel="noopener">Demo photo credits</a>' : ''}</span>
         <span>Ordering powered by <b>Tiffin</b></span>
       </div>`;
   }
+
+  A.renderFooter = () => renderFooter();
 
   /* ---------- Mobile cart bar ---------- */
   function renderCartBar() {
@@ -264,23 +271,6 @@
   }
   A.action('reload', () => location.reload());
 
-  /* ---------- Website settings from the hub admin page (Stores > store > Website) ---------- */
-  // An empty setting on the hub falls back to js/config.js.
-  const CONFIG_DEFAULTS = { ...C };
-  const WEBSITE_TEXT = ['heroTitle', 'heroSubtitle', 'heroImage', 'about', 'phone', 'address'];
-  function applyWebsite(w) {
-    if (!w) return;
-    for (const k of WEBSITE_TEXT) C[k] = w[k] || CONFIG_DEFAULTS[k] || '';
-    const root = document.documentElement.style;
-    if (/^#[0-9a-f]{6}$/i.test(w.brandColor || '')) {
-      root.setProperty('--primary', w.brandColor);
-      root.setProperty('--primary-hover', `color-mix(in srgb, ${w.brandColor} 85%, #000)`);
-    } else { root.removeProperty('--primary'); root.removeProperty('--primary-hover'); }
-    const $a = document.getElementById('announce');
-    document.getElementById('announce-text').textContent = w.announcement || '';
-    $a.hidden = !w.announcement;
-  }
-
   /* ---------- Start: load the store and its menu from the hub ---------- */
   async function start() {
     $app.innerHTML = `<section class="page container"><div class="loading"><span class="spinner"></span><p>Loading the menu…</p></div></section>`;
@@ -293,7 +283,8 @@
     } catch (err) {
       why = err.code === 'NETWORK' || !err.status || err.status >= 500 ? 'unreachable' : 'no-menu';
     }
-    const demoAllowed = new URLSearchParams(location.search).has('demo') || C.demo === true;
+    // the builder's preview shows the sample menu when the store has none yet, so the design can still be seen
+    const demoAllowed = new URLSearchParams(location.search).has('demo') || C.demo === true || A.preview;
     if (why && !demoAllowed) {
       // Production: never fall back to the pretend kitchen. Say what is wrong and load the real menu once the hub answers.
       console.warn(`Order hub problem: ${why === 'no-menu' ? 'the store has no menu on the hub yet' : 'the hub cannot be reached'}.`);
@@ -312,18 +303,18 @@
       watchForHub();
     }
     A.setShop(shop);
-    applyWebsite(shop.website);
-    document.title = `${A.shop.name} · Order online${A.demo ? ' (demo)' : ''}`;
+    A.applySite(shop.site); // the published design (the builder's preview gets its draft by message)
     renderFooter();
     window.addEventListener('hashchange', () => { navCount++; A.closeModal?.(); A.render(); window.scrollTo(0, 0); });
     A.render();
+    A.previewReady();
     // Keep "open / closed" and the menu current without disturbing the page being used
     setInterval(async () => {
       try {
         const wasOpen = A.shop.open, version = A.shop.menu?.version;
         const latest = await Hub.store();
         A.setShop(latest);
-        applyWebsite(latest.website); // the announcement and colour change at once; texts on the next page view
+        if (!A.preview && JSON.stringify(latest.site) !== JSON.stringify(A.site)) { A.applySite(latest.site); renderFooter(); if (current === '') A.refresh(); } // just published
         A.clearQuote();
         if (wasOpen !== A.shop.open || version !== A.shop.menu?.version) {
           if (['', 'checkout'].includes(current) && document.getElementById('modal').hidden) A.refresh();

@@ -78,47 +78,67 @@
     });
   }
 
-  function heroImage() {
-    if (C.heroImage) return C.heroImage;
+  // The hero's photo: the one chosen in the builder, else js/config.js, else the first dish photo
+  function heroImage(s) {
+    const own = A.imgSrc(s.image) || C.heroImage;
+    if (own) return own;
     if (A.demo) return 'images/demo/hero.jpg';
     return ITEMS.find((i) => i.image)?.image || null;
   }
 
+  function heroHTML(s) {
+    const shop = A.shop;
+    const img = heroImage(s);
+    const today = A.hoursToday();
+    const title = s.title || C.heroTitle || A.brandName();
+    return `
+      <div class="hero ${img ? '' : 'no-img'} ${s.align === 'center' ? 'center' : ''}" ${A.editAttr(s)}>
+        ${A.editBadge(s)}
+        ${img ? `<img class="hero-img" src="${esc(img)}" alt="" onerror="this.remove()">` : `<div class="hero-emoji" aria-hidden="true">${[...new Set(ITEMS.map((i) => i.emoji))].slice(0, 6).join('') || '🍛🥘🍜'}</div>`}
+        ${noteClosed ? '' : `
+        <div class="hero-note">
+          <span class="hero-note-ico">${I.clock}</span>
+          <div class="grow">
+            <strong>${shop.open ? esc(today || 'Open now') : 'Not taking orders right now'}</strong>
+            <p>${shop.open ? 'Order now — the kitchen starts your dishes the moment the restaurant confirms.' : esc(shop.reason || 'Please check back later.')}</p>
+          </div>
+          <button class="hero-note-x" data-action="close-note" aria-label="Close">${I.close}</button>
+        </div>`}
+        <div class="hero-text">
+          <h1>${esc(title)}</h1>
+          ${s.subtitle ? `<p>${esc(s.subtitle)}</p>` : ''}
+          ${s.buttonText ? `<button class="btn hero-btn" data-action="go-menu">${esc(s.buttonText)}</button>` : ''}
+        </div>
+      </div>`;
+  }
+
+  // The menu with its category chips and the cart beside it (exactly one per page)
+  function menuHTML(s) {
+    return `
+      <div class="menu-block" id="menu-start" ${A.editAttr(s)}>
+        ${A.editBadge(s)}
+        ${s.title ? `<div class="block-head"><h2>${esc(s.title)}</h2></div>` : ''}
+        ${CATEGORIES.length > 1 && A.site.menu.showCategoryChips ? `
+        <nav class="cats" id="cats" aria-label="Menu categories">
+          <div class="cats-inner">
+            ${CATEGORIES.map((c, i) => `<button class="chip ${i === 0 ? 'active' : ''}" data-action="go-cat" data-cat="${esc(c.id)}">${esc(c.name)}</button>`).join('')}
+          </div>
+        </nav>` : ''}
+        <div class="menu-layout">
+          <div class="menu-main" id="sections" data-q="${esc(state.query)}">${sectionsHTML()}</div>
+          <aside class="cart-side" id="cart-side">${cartHTML()}</aside>
+        </div>
+      </div>`;
+  }
+
   A.route('', {
     render() {
-      const shop = A.shop;
-      const img = heroImage();
-      const today = A.hoursToday();
+      // while searching, only the menu: the results are what the customer wants
+      const all = A.site.sections.filter((s) => !s.hidden || s.type === 'menu');
+      const shown = state.query.trim() ? all.filter((s) => s.type === 'menu') : all;
       return `
         <section class="page container home">
-          <div class="hero ${img ? '' : 'no-img'}">
-            ${img ? `<img class="hero-img" src="${esc(img)}" alt="" onerror="this.remove()">` : `<div class="hero-emoji" aria-hidden="true">${[...new Set(ITEMS.map((i) => i.emoji))].slice(0, 6).join('') || '🍛🥘🍜'}</div>`}
-            ${noteClosed ? '' : `
-            <div class="hero-note">
-              <span class="hero-note-ico">${I.clock}</span>
-              <div class="grow">
-                <strong>${shop.open ? esc(today || 'Open now') : 'Not taking orders right now'}</strong>
-                <p>${shop.open ? 'Order now — the kitchen starts your dishes the moment the restaurant confirms.' : esc(shop.reason || 'Please check back later.')}</p>
-              </div>
-              <button class="hero-note-x" data-action="close-note" aria-label="Close">${I.close}</button>
-            </div>`}
-            <div class="hero-text">
-              <h1>${esc(C.heroTitle || shop.name)}</h1>
-              ${C.heroSubtitle ? `<p>${esc(C.heroSubtitle)}</p>` : ''}
-            </div>
-          </div>
-
-          ${CATEGORIES.length > 1 ? `
-          <nav class="cats" id="cats" aria-label="Menu categories">
-            <div class="cats-inner">
-              ${CATEGORIES.map((c, i) => `<button class="chip ${i === 0 ? 'active' : ''}" data-action="go-cat" data-cat="${esc(c.id)}">${esc(c.name)}</button>`).join('')}
-            </div>
-          </nav>` : ''}
-
-          <div class="menu-layout">
-            <div class="menu-main" id="sections" data-q="${esc(state.query)}">${sectionsHTML()}</div>
-            <aside class="cart-side" id="cart-side">${cartHTML()}</aside>
-          </div>
+          ${shown.map((s) => (s.type === 'hero' ? heroHTML(s) : s.type === 'menu' ? menuHTML(s) : A.blockHTML(s))).join('')}
         </section>`;
     },
     mount() {
@@ -130,6 +150,8 @@
       const sections = document.getElementById('sections');
       if (!sections) return;
       const q = state.query;
+      // search started or ended: the other sections hide or come back
+      if (Boolean(sections.dataset.q.trim()) !== Boolean(q.trim())) { A.render(); return; }
       if (sections.dataset.q !== q) { sections.innerHTML = sectionsHTML(); sections.dataset.q = q; spy(); }
       else ITEMS.forEach((item) => { const f = sections.querySelector(`[data-foot="${CSS.escape(item.id)}"]`); if (f) f.innerHTML = A.cardFoot(item); });
       document.getElementById('cart-side').innerHTML = cartHTML();
@@ -161,6 +183,10 @@
     if (!s) return;
     const y = s.getBoundingClientRect().top + window.scrollY - (document.getElementById('site-header').offsetHeight + 64);
     window.scrollTo({ top: y, behavior: 'smooth' });
+  });
+  A.action('go-menu', () => {
+    const m = document.getElementById('menu-start');
+    if (m) window.scrollTo({ top: m.getBoundingClientRect().top + window.scrollY - document.getElementById('site-header').offsetHeight - 8, behavior: 'smooth' });
   });
   A.action('close-note', () => { noteClosed = true; document.querySelector('.hero-note')?.remove(); });
 

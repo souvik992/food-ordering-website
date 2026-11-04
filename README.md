@@ -19,10 +19,24 @@ No build step: plain HTML, CSS and JavaScript. Host the folder on any static web
    **Serviceability** (store location, delivery distances and fees, opening hours).
 3. Open a shift in the POS. Customers can only order while a shift is open and the store is within its opening hours.
 
-The words, photo, phone, address, announcement and colour are best set on the hub instead: **hub admin page
-(`/admin`) > Stores > the store > Website**. The website picks them up on its next page load, no redeploy needed;
-an empty field there falls back to `js/config.js`. Only `hubUrl`, `store` and `demo` must stay in `js/config.js`
-(the website needs them before it can reach the hub).
+**Design the website in the website builder** at `<website address>/admin` (for example
+`https://order.example.com/admin`). Sign in with the store's **website editor password**: the hub admin makes it on the
+hub admin page (Stores > the store > New editor password) or with `npm run admin -- site-password <store>` on the hub.
+In the builder, beside a live preview (computer, tablet or phone size):
+
+- **Sections:** add, drag to reorder, hide and edit the home page sections: hero banner, featured dishes, menu (always
+  there), about us, photo gallery, reviews, opening hours (from the POS), contact and map, questions (FAQ), text block;
+  plus an announcement bar above the header.
+- **Theme:** ready-made looks, colours, fonts, corners, button shape, header style.
+- **Brand & SEO:** restaurant name, tagline, logo, browser tab icon, Google title and description, sharing picture.
+- **Contact:** phone, WhatsApp, email, address, Google Maps link, Instagram, Facebook, YouTube, footer text.
+- **Menu:** cards or list, and whether dish photos, descriptions, veg marks and category buttons show.
+
+Photos are uploaded from the computer or phone (made smaller first). Changes are kept as a draft; **Publish** makes them
+live, and customers see them the next time they open or reload the website. Undo / Redo and Discard are there too. The
+menu, prices, dish photos and opening hours still come from the POS. Only `hubUrl`, `store` and `demo` stay in
+`js/config.js` (the website needs them before it can reach the hub); its other values are used only until a design is
+published.
 
 For testing, override both settings in the address bar: `index.html?hub=http://localhost:4900&store=demo`.
 
