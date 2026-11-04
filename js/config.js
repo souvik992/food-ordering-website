@@ -3,8 +3,15 @@
 //   store:  the store's short name on the hub (created with `npm run admin -- create-store <name> "<Store name>"`).
 // For testing, both can be overridden in the address bar: index.html?hub=http://localhost:4900&store=demo
 window.TIFFIN_CONFIG = {
-  hubUrl: 'http://localhost:4900',
-  store: 'demo',
+  hubUrl: 'https://15-252-100-75.sslip.io',
+  store: 'bengaluru',
+
+  // Demo mode: a sample menu with a pretend kitchen that moves orders along by itself. Nothing reaches the POS.
+  //   false: never (production). Orders and their status always come from the hub and the POS ODS; if the hub
+  //          cannot be reached, the site says so and offers to try again.
+  //   true:  show the demo when the hub cannot be reached or the store has no menu yet (previews, design work).
+  // For testing, override it in the address bar: index.html?demo=1
+  demo: false,
 
   // Optional: what the website says about the restaurant. Empty values are left out.
   heroTitle: 'Freshly cooked, delivered hot',

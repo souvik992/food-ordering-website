@@ -19,11 +19,20 @@ No build step: plain HTML, CSS and JavaScript. Host the folder on any static web
    **Serviceability** (store location, delivery distances and fees, opening hours).
 3. Open a shift in the POS. Customers can only order while a shift is open and the store is within its opening hours.
 
+The words, photo, phone, address, announcement and colour are best set on the hub instead: **hub admin page
+(`/admin`) > Stores > the store > Website**. The website picks them up on its next page load, no redeploy needed;
+an empty field there falls back to `js/config.js`. Only `hubUrl`, `store` and `demo` must stay in `js/config.js`
+(the website needs them before it can reach the hub).
+
 For testing, override both settings in the address bar: `index.html?hub=http://localhost:4900&store=demo`.
 
 ## Demo mode (no hub connection)
 
-If the website cannot reach the order hub when it opens (hub down, wrong address, no internet), or the hub answers
+Demo mode is **off in production** (`demo: false` in `js/config.js`): orders and their live status always come from
+the hub and the POS ODS, and if the hub cannot be reached the site says so and loads the real menu as soon as it
+answers. Turn it on with `demo: true`, or add `?demo=1` to the address, for previews.
+
+When it is on: if the website cannot reach the order hub when it opens (hub down, wrong address, no internet), or the hub answers
 but the store has no menu yet (the POS has not been paired and published its menu), it shows a **demo website**
 instead of an error: a sample menu with photos (`js/demo.js`, `images/demo/`) where everything works (options,
 cart, checkout with the code `123456`, placing orders, live tracking from a pretend kitchen, cancel and reorder). A

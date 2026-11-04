@@ -264,6 +264,23 @@
   }
   A.action('reload', () => location.reload());
 
+  /* ---------- Website settings from the hub admin page (Stores > store > Website) ---------- */
+  // An empty setting on the hub falls back to js/config.js.
+  const CONFIG_DEFAULTS = { ...C };
+  const WEBSITE_TEXT = ['heroTitle', 'heroSubtitle', 'heroImage', 'about', 'phone', 'address'];
+  function applyWebsite(w) {
+    if (!w) return;
+    for (const k of WEBSITE_TEXT) C[k] = w[k] || CONFIG_DEFAULTS[k] || '';
+    const root = document.documentElement.style;
+    if (/^#[0-9a-f]{6}$/i.test(w.brandColor || '')) {
+      root.setProperty('--primary', w.brandColor);
+      root.setProperty('--primary-hover', `color-mix(in srgb, ${w.brandColor} 85%, #000)`);
+    } else { root.removeProperty('--primary'); root.removeProperty('--primary-hover'); }
+    const $a = document.getElementById('announce');
+    document.getElementById('announce-text').textContent = w.announcement || '';
+    $a.hidden = !w.announcement;
+  }
+
   /* ---------- Start: load the store and its menu from the hub ---------- */
   async function start() {
     $app.innerHTML = `<section class="page container"><div class="loading"><span class="spinner"></span><p>Loading the menu…</p></div></section>`;
@@ -276,6 +293,17 @@
     } catch (err) {
       why = err.code === 'NETWORK' || !err.status || err.status >= 500 ? 'unreachable' : 'no-menu';
     }
+    const demoAllowed = new URLSearchParams(location.search).has('demo') || C.demo === true;
+    if (why && !demoAllowed) {
+      // Production: never fall back to the pretend kitchen. Say what is wrong and load the real menu once the hub answers.
+      console.warn(`Order hub problem: ${why === 'no-menu' ? 'the store has no menu on the hub yet' : 'the hub cannot be reached'}.`);
+      $app.innerHTML = `<section class="page container">${A.empty('🍽️',
+        why === 'no-menu' ? 'Online ordering is not set up yet' : 'We can’t reach the restaurant right now',
+        why === 'no-menu' ? 'The restaurant’s menu is not connected yet. Please check back soon.' : 'Check your internet connection. This page tries again by itself.')}
+        <p class="center"><button class="btn" data-action="reload">Try again</button></p></section>`;
+      const t = setInterval(async () => { try { if ((await Hub.store()).menu) { clearInterval(t); location.reload(); } } catch { /* still down */ } }, 30_000);
+      return;
+    }
     if (why) {
       console.warn(`Showing the demo website (${why === 'no-menu' ? 'the store has no menu on the hub yet' : 'the order hub cannot be reached'}).`);
       A.enterDemo();
@@ -284,6 +312,7 @@
       watchForHub();
     }
     A.setShop(shop);
+    applyWebsite(shop.website);
     document.title = `${A.shop.name} · Order online${A.demo ? ' (demo)' : ''}`;
     renderFooter();
     window.addEventListener('hashchange', () => { navCount++; A.closeModal?.(); A.render(); window.scrollTo(0, 0); });
@@ -292,7 +321,9 @@
     setInterval(async () => {
       try {
         const wasOpen = A.shop.open, version = A.shop.menu?.version;
-        A.setShop(await Hub.store());
+        const latest = await Hub.store();
+        A.setShop(latest);
+        applyWebsite(latest.website); // the announcement and colour change at once; texts on the next page view
         A.clearQuote();
         if (wasOpen !== A.shop.open || version !== A.shop.menu?.version) {
           if (['', 'checkout'].includes(current) && document.getElementById('modal').hidden) A.refresh();
