@@ -3,7 +3,7 @@
 //   store:  the store's short name on the hub (created with `npm run admin -- create-store <name> "<Store name>"`).
 // For testing, both can be overridden in the address bar: index.html?hub=http://localhost:4900&store=demo
 window.TIFFIN_CONFIG = {
-  hubUrl: 'https://15-252-100-75.sslip.io',
+  hubUrl: 'https://3-6-30-45.sslip.io/',
   store: 'bengaluru',
 
   // Demo mode: a sample menu with a pretend kitchen that moves orders along by itself. Nothing reaches the POS.
