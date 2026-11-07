@@ -12,6 +12,15 @@
   /* ---------- Header ---------- */
   function contextPill() {
     const f = A.shop.fulfilment || {};
+    if (state.fulfilment === 'PICKUP' && Hub.brand && !A.demo) {
+      // brand website: the outlet the hub chose; tapping changes where the customer is or delivery/pickup
+      return `
+        <a class="ctx-pill" href="#/where">
+          <span class="ctx-ico">${I.store}</span>
+          <span class="grow"><small>Pickup from${A.outlet?.distanceKm != null ? ` · ${A.outlet.distanceKm} km` : ''}</small><b>${esc(A.shop.name)}</b></span>
+          <span class="chev">${I.chevRight}</span>
+        </a>`;
+    }
     if (state.fulfilment === 'PICKUP') {
       return `
         <button class="ctx-pill" data-action="toggle-fulfilment" ${f.delivery ? '' : 'disabled'} title="${f.delivery ? 'Switch to delivery' : ''}">
@@ -164,6 +173,7 @@
     if (cleanup) { cleanup(); cleanup = null; }
     let [, name = '', ...rest] = (location.hash.slice(1) || '/').split('/');
     if (name in ALIASES) name = ALIASES[name];
+    if (Hub.brand && !A.shop) { name = 'where'; rest = []; } // brand website, no outlet yet: ask where the customer is
     const param = rest.length ? decodeURIComponent(rest.join('/')) : undefined;
     let route = A.routes[name];
     let html = route ? route.render(param) : null;
@@ -173,6 +183,7 @@
     document.body.dataset.page = name || 'home';
     $app.innerHTML = html;
     route.mount?.(param);
+    if (!A.shop) { $header.innerHTML = `<div class="container hdr"><a class="logo" href="#/">${A.brand ? esc(A.brand.name) : ''}</a></div>`; return; }
     A.renderHeader();
     A.updateChrome();
   };
@@ -272,8 +283,48 @@
   A.action('reload', () => location.reload());
 
   /* ---------- Start: load the store and its menu from the hub ---------- */
+  /* ---------- Brand website: the outlet comes from where the customer is ---------- */
+  async function startBrand() {
+    try {
+      A.brand = await Hub.brandInfo();
+    } catch (err) {
+      $app.innerHTML = `<section class="page container">${A.empty('🍽️', 'We can’t reach the restaurant right now', esc(err.message))}
+        <p class="center"><button class="btn" data-action="reload">Try again</button></p></section>`;
+      return;
+    }
+    document.title = A.brand.name;
+    try {
+      await A.chooseOutlet();
+    } catch (e) {
+      if (!['NO_LOCATION', 'NO_OUTLET', 'VALIDATION'].includes(e.code)) {
+        $app.innerHTML = `<section class="page container">${A.empty('🍽️', 'We can’t reach the restaurant right now', esc(e.message))}
+          <p class="center"><button class="btn" data-action="reload">Try again</button></p></section>`;
+        return;
+      }
+      A.whereError = e.code === 'NO_LOCATION' ? '' : e.message;
+    }
+    A.applySite(A.brand.site); // the brand's design (its main outlet's published website)
+    window.addEventListener('hashchange', () => { navCount++; A.closeModal?.(); A.render(); window.scrollTo(0, 0); });
+    A.render();
+    if (A.shop) renderFooter();
+    // every minute: choose again (an outlet may have closed or opened) and keep "open / closed" and the menu current
+    setInterval(async () => {
+      if (!A.shop) return;
+      try {
+        const wasOpen = A.shop.open, version = A.shop.menu?.version, slug = A.shop.slug;
+        await A.chooseOutlet();
+        if (slug !== A.shop.slug || wasOpen !== A.shop.open || version !== A.shop.menu?.version) {
+          if (['', 'checkout'].includes(current) && document.getElementById('modal').hidden) A.refresh();
+        }
+        A.renderHeader();
+        A.updateChrome();
+      } catch { /* try again next time */ }
+    }, 60_000);
+  }
+
   async function start() {
     $app.innerHTML = `<section class="page container"><div class="loading"><span class="spinner"></span><p>Loading the menu…</p></div></section>`;
+    if (Hub.brand && !new URLSearchParams(location.search).has('demo')) return startBrand();
     // No hub, or the restaurant's POS has not connected to it yet (no store or no menu): show the demo website
     // (sample menu, everything works, nothing reaches the restaurant). A store with a menu that is closed shows as usual.
     let shop = null, why = null;

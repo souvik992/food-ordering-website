@@ -299,6 +299,8 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 .notice.warn { background: var(--red-bg); color: var(--red-fg); margin-bottom: 16px; }
 .notice.ok { background: var(--green-bg); color: var(--green-fg); margin-bottom: 16px; }
 .notice svg { margin-top: 1px; }
+.notice.outlet { background: var(--grey-bg); color: inherit; text-decoration: none; margin-bottom: 16px; align-items: center; }
+.notice.outlet .grow { flex: 1; }
 
 .tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .tiles.stack { grid-template-columns: 1fr; }

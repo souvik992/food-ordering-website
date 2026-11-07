@@ -13,8 +13,9 @@ window.App = (function () {
     },
   };
 
-  // Keys are prefixed per store, so one browser can order from two stores without mixing carts.
-  const key = (k) => `tf_${Hub.slug}_${k}`;
+  // Keys are prefixed per store (or per brand: switching outlets keeps the cart), so one browser can order from two
+  // stores without mixing carts. Demo mode has its own.
+  const key = (k) => `tf_${A.demo || !Hub.brand ? Hub.slug : Hub.brand}_${k}`;
   const list = (v) => (Array.isArray(v) ? v : []);
 
   // What is kept in this browser (per store; demo mode has its own copy)
@@ -30,6 +31,8 @@ window.App = (function () {
     addresses: list(store.get(key('addresses'), [])),
     fulfilment: store.get(key('fulfilment'), 'DELIVERY'),
     notifications: list(store.get(key('notifications'), [])),
+    // brand website: where the customer is ({ lat, lng }); with the delivery address it chooses the outlet
+    near: store.get(key('near'), null),
   });
 
   const state = {
@@ -49,6 +52,7 @@ window.App = (function () {
     store.set(key('addresses'), state.addresses);
     store.set(key('fulfilment'), state.fulfilment);
     store.set(key('notifications'), state.notifications.slice(0, 50));
+    store.set(key('near'), state.near);
   }
 
   // Demo mode (the order hub cannot be reached): use the stand-in hub and its own saved data
@@ -177,6 +181,7 @@ window.App = (function () {
   }
   // The full quote for placing the order (needs the delivery location)
   function getQuote() {
+    if (needsOutlet()) return ensureOutlet().then(() => getQuote());
     const req = quoteRequest();
     if (req.fulfilment === 'DELIVERY' && !req.location) return Promise.reject(Object.assign(new Error('Add a delivery address with its location to see the delivery fee.'), { code: 'NO_LOCATION' }));
     return ask(req).promise;
@@ -188,10 +193,43 @@ window.App = (function () {
     if (req.fulfilment === 'DELIVERY' && !req.location && A.shop.fulfilment?.pickup) return { ...req, fulfilment: 'PICKUP' };
     return req;
   }
-  const getBasket = () => (state.cart.length ? ask(basketRequest()).promise : Promise.resolve(null));
+  const getBasket = () => (!state.cart.length ? Promise.resolve(null) : needsOutlet() ? ensureOutlet().then(() => getBasket()) : ask(basketRequest()).promise);
   // The last basket price, if it is already known for the cart as it is now
   const basketNow = () => (state.cart.length ? quotes.get(JSON.stringify(basketRequest()))?.value || null : null);
   const clearQuote = () => quotes.clear();
+
+  /* ---------- Brand website: the hub chooses the outlet from where the customer is ---------- */
+  // Delivery: the delivery address (or where the customer is); pickup: where the customer is (or the address)
+  function outletLocation() {
+    const fromAddr = addrLocation(defaultAddress());
+    return state.fulfilment === 'DELIVERY' ? fromAddr || state.near : state.near || fromAddr;
+  }
+  const outletKey = () => { const l = outletLocation(); return l ? `${state.fulfilment}|${l.lat},${l.lng}` : ''; };
+  // a price is asked for: is the outlet still the one for this pickup/delivery and location?
+  const needsOutlet = () => Boolean(Hub.brand && !A.demo && !(A.outlet && A.outlet.key === outletKey()));
+  // r = { outlet (its store page), distanceKm, label } from the hub. Returns true when the outlet changed.
+  function applyOutlet(r) {
+    const before = A.shop?.slug;
+    Hub.slug = r.outlet.slug;
+    setShop(r.outlet);
+    A.outlet = { distanceKm: r.distanceKm ?? null, label: r.label ?? null, key: outletKey() };
+    clearQuote();
+    const changed = Boolean(before && before !== r.outlet.slug);
+    if (changed) { state.checkoutKey = null; toast(`Your order now comes from ${r.outlet.name}`); }
+    return changed;
+  }
+  async function chooseOutlet() {
+    const loc = outletLocation();
+    if (!loc) throw Object.assign(new Error('Tell us where you are so we can find the outlet nearest to you.'), { code: 'NO_LOCATION' });
+    return applyOutlet(await Hub.outlet(state.fulfilment, loc));
+  }
+  async function ensureOutlet() {
+    if (await chooseOutlet()) setTimeout(() => { A.refresh(); A.renderHeader?.(); }, 0); // another outlet: its menu and cart
+  }
+  // "Delivered from <outlet> · 2.4 km away · Change" (brand website)
+  const outletBar = () => (Hub.brand && !A.demo && A.shop && A.outlet
+    ? `<a class="notice outlet" href="#/where">${I.store}<span class="grow">${state.fulfilment === 'DELIVERY' ? 'Delivered' : 'Pickup'} from <b>${esc(A.shop.name)}</b>${A.outlet.distanceKm != null ? ` · ${A.outlet.distanceKm} km away` : ''}${A.outlet.label ? ` · ${esc(A.outlet.label)}` : ''}</span><u>Change</u></a>`
+    : '');
 
   const $toast = document.getElementById('toast');
   function toast(msg) {
@@ -351,7 +389,7 @@ window.App = (function () {
   }
 
   // Banner when the restaurant is not taking orders
-  const shopBanner = () => (A.shop && !A.shop.open ? `<div class="notice warn">${I.clock}<span>${esc(A.shop.reason || 'The restaurant is not taking online orders right now.')}</span></div>` : '');
+  const shopBanner = () => outletBar() + (A.shop && !A.shop.open ? `<div class="notice warn">${I.clock}<span>${esc(A.shop.reason || 'The restaurant is not taking online orders right now.')}</span></div>` : '');
 
   const initials = (name) => (name || '?').split(' ').filter(Boolean).map((s) => s[0]).slice(0, 2).join('').toUpperCase();
 
@@ -404,7 +442,7 @@ window.App = (function () {
     store, state, save, money, byId, cartCount, esc, fmtDate, fmtTime, media, vegTag, toast, notify,
     defaultAddress, addrLocation, enterDemo, addressText, unreadCount, signedIn, I, ADDRESS_ICONS, initials,
     setShop, etaMinutes, hoursToday, modifierGroups, modifierNames, addToCart, setLineQty, qtyOf, hubLines,
-    getQuote, getBasket, basketNow, clearQuote,
+    getQuote, getBasket, basketNow, clearQuote, outletLocation, applyOutlet, chooseOutlet, outletBar,
     isActive, updateOrder, statusText, failed, statusTag,
     stepper, cardFoot, cardHTML, empty, tile, timeline, shopBanner, accountNav, accountPage, pageHead,
     routes, actions, forms, inputs,

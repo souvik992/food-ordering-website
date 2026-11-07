@@ -251,7 +251,7 @@
       };
       // the same key on a retry, so a network hiccup never creates two orders
       state.checkoutKey ||= Hub.newKey();
-      const r = await Hub.placeOrder(body, state.checkoutKey);
+      const r = await Hub.placeOrder(body, state.checkoutKey, A.outletLocation());
       state.orders = [{ id: r.order.id, token: r.accessToken, order: r.order }, ...state.orders.filter((o) => o.id !== r.order.id)];
       A.notify(`Order ${r.order.number} placed`, `Sent to ${A.shop.name}. Total ${money(r.order.total)}, ${delivery ? 'cash on delivery' : 'pay at pickup'}.`);
       state.cart = []; state.note = ''; state.checkoutKey = null; state.justPlaced = r.order.id;
@@ -262,7 +262,7 @@
     } catch (e) {
       placing = false;
       buttons.forEach((b) => b.classList.remove('busy'));
-      if (['PRICE_CHANGED', 'ITEM_UNAVAILABLE', 'OPTION_INVALID', 'VALIDATION', 'BELOW_MINIMUM', 'OUT_OF_AREA'].includes(e.code)) {
+      if (['PRICE_CHANGED', 'ITEM_UNAVAILABLE', 'OPTION_INVALID', 'VALIDATION', 'BELOW_MINIMUM', 'OUT_OF_AREA', 'OUTLET_CHANGED', 'NO_OUTLET'].includes(e.code)) {
         state.checkoutKey = null; // a changed order is a new order
       }
       if (e.code === 'OTP_REQUIRED') {
@@ -271,6 +271,14 @@
         location.hash = '#/login/checkout';
         return;
       }
+      // brand website: another outlet gets the order now (one closed or opened): nothing was placed; show its menu and total
+      if (e.code === 'OUTLET_CHANGED' && e.details?.outlet) {
+        A.applyOutlet(e.details);
+        A.refresh();
+        document.getElementById('place-err').textContent = e.message;
+        return;
+      }
+      if (e.code === 'NO_OUTLET') { A.whereError = e.message; location.hash = '#/where'; return; }
       if (e.code === 'PRICE_CHANGED' || e.code === 'ITEM_UNAVAILABLE') {
         // reload the menu and prices, then show the new total
         try { A.setShop(await Hub.store()); } catch { /* keep the old one */ }

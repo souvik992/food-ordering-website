@@ -138,6 +138,7 @@
       const shown = state.query.trim() ? all.filter((s) => s.type === 'menu') : all;
       return `
         <section class="page container home">
+          ${A.outletBar()}
           ${shown.map((s) => (s.type === 'hero' ? heroHTML(s) : s.type === 'menu' ? menuHTML(s) : A.blockHTML(s))).join('')}
         </section>`;
     },

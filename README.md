@@ -40,6 +40,23 @@ published.
 
 For testing, override both settings in the address bar: `index.html?hub=http://localhost:4900&store=demo`.
 
+## Several outlets: one website, orders go to the nearest outlet
+
+Make a **brand** on the hub's admin page (Brands: add the brand, then add its outlets), then in `js/config.js` set
+`brand: '<brand address>'` instead of `store` (or test with `index.html?hub=...&brand=<brand>`).
+
+- On the first visit the site asks where the customer is (phone location, the map position typed in, or a saved
+  address) and whether they want delivery or pickup.
+- The hub chooses the outlet: for delivery the nearest outlet that is open and delivers to the delivery address, for
+  pickup the nearest open outlet. The menu page and checkout say "Delivered from <outlet> · x km away · Change"; for
+  pickup the header says "Pickup from <outlet>".
+- The menu, prices and totals are that outlet's own. When the address or delivery/pickup changes, the outlet is chosen
+  again; items the new outlet does not sell are taken out of the cart (the customer is told).
+- If the choice changed just before ordering (an outlet closed or opened), nothing is placed: the site switches to the
+  new outlet and shows its total. If no outlet can take the order, the customer is told why.
+- The website design is the brand's main outlet's (set on the hub admin page). Carts, favourites, sign-in and orders
+  are kept per brand, so switching outlets keeps them. Demo mode (`?demo=1`) ignores the brand.
+
 ## Demo mode (no hub connection)
 
 Demo mode is **off in production** (`demo: false` in `js/config.js`): orders and their live status always come from

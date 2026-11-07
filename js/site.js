@@ -15,7 +15,7 @@
   /** A photo in the design: hub:<name> (uploaded in the builder) or an https:// link. */
   A.imgSrc = (ref) => (!ref ? null : ref.startsWith('hub:') ? Hub.imageUrl(ref.slice(4)) : ref);
   /** The name customers see: the builder's, else the store's name on the hub. */
-  A.brandName = () => A.site.brand.name || A.shop?.name || '';
+  A.brandName = () => A.site.brand.name || A.brand?.name || A.shop?.name || ''; // brand website: the brand, not the outlet
   const paras = (t) => esc(t).split(/\n{2,}/).map((p) => `<p>${p.replace(/\n/g, '<br>')}</p>`).join('');
 
   /* ---------- Theme, brand, SEO, bar ---------- */
