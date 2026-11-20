@@ -11,7 +11,7 @@ window.TIFFIN_CONFIG = {
   //          cannot be reached, the site says so and offers to try again.
   //   true:  show the demo when the hub cannot be reached or the store has no menu yet (previews, design work).
   // For testing, override it in the address bar: index.html?demo=1
-  demo: true,
+  demo: false,
 
   // Optional: what the website says about the restaurant. Empty values are left out.
   heroTitle: 'Freshly cooked, delivered hot',
