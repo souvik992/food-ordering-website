@@ -47,6 +47,24 @@
     return `<div class="kitchen-pill"><span class="ctx-ico">${I.chef}</span><span class="grow"><small>${eta ? `≈ ${eta} minutes` : 'Order now'}</small><b><span class="xs-hide">Kitchen is open</span><span class="xs-show">${eta ? `≈${eta} min · ` : ''}Open</span></b></span></div>`;
   }
 
+  // Web view: cart button with item count and subtotal (phones use the bottom cart bar instead)
+  let lastCount = null;
+  function cartButton() {
+    const n = A.cartCount();
+    const bump = lastCount != null && n > lastCount;
+    lastCount = n;
+    const q = A.basketNow();
+    if (n && !q) {
+      A.getBasket().then((v) => { const el = document.getElementById('hdr-cart-total'); if (el && v) el.textContent = money(v.itemsTotal); }).catch(() => {});
+    }
+    const label = n ? `Cart, ${n} item${n === 1 ? '' : 's'}` : 'Cart is empty';
+    return `
+      <a class="hdr-cart hide-sm${n ? ' has-items' : ''}${current === 'checkout' ? ' active' : ''}" href="#/checkout" aria-label="${label}" title="${label}">
+        <span class="hdr-cart-ico">${I.bag}${n ? `<b class="hdr-cart-n${bump ? ' bump' : ''}">${n > 99 ? '99+' : n}</b>` : ''}</span>
+        <span class="hdr-cart-txt"><small>Cart</small><b id="hdr-cart-total">${n ? (q ? money(q.itemsTotal) : '…') : 'Empty'}</b></span>
+      </a>`;
+  }
+
   A.renderHeader = () => {
     $header.innerHTML = `
       <div class="container hdr">
@@ -56,6 +74,7 @@
           <button class="icon-btn" data-action="toggle-search" aria-label="Search the menu">${I.search}</button>
           <a class="btn outline sm hide-sm" href="#/orders">${I.arrowRight} My orders</a>
           <a class="icon-btn" href="#/account" aria-label="Account">${I.user}${A.state.orders.some(A.isActive) ? '<b class="dot"></b>' : ''}</a>
+          ${cartButton()}
         </div>
       </div>
       <div class="search-row container" ${searchOpen ? '' : 'hidden'}>
