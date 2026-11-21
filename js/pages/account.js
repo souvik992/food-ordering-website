@@ -55,52 +55,112 @@
 
   /* ---------- Address form (the "Add delivery address" page). Delivery needs the map location: the hub uses it for distance and fee ---------- */
   let draftLoc = null;
+  // The street address found for draftLoc (like Swiggy/Zomato): { title, line2, city, pincode }.
+  // When it is complete, the customer only types the house / flat / floor.
+  let draftGeo = null;
+  const geoComplete = (g) => Boolean(g && g.city && /^[1-9]\d{5}$/.test(g.pincode));
+
   // next: the page to go back to once the address is saved (e.g. 'checkout')
-  A.addressForm = ({ next = 'addresses' } = {}) => `
+  A.addressForm = ({ next = 'addresses' } = {}) => {
+    const g = draftGeo, short = geoComplete(g);
+    return `
     <form class="addr-form" data-form="address" data-next="${esc(next)}">
       <div class="addr-labels">
         ${['Home', 'Work', 'Other'].map((l, i) => `<label class="filter-radio"><input type="radio" name="label" value="${l}" ${i === 0 ? 'checked' : ''} /><span>${l}</span></label>`).join('')}
       </div>
       <div class="locate">
         <button type="button" class="btn outline sm" data-action="locate">${I.locate} Use my current location</button>
-        <small class="muted" id="loc-text">${draftLoc ? `${I.check} Location set` : 'Needed for delivery. Stand at the address, or enter the map position below.'}</small>
+        <small class="muted" id="loc-text">${draftLoc ? `${I.check} Location set` : 'Needed for delivery. We fill in the address for you.'}</small>
+      </div>
+      <div class="detected" id="addr-detected" ${short ? '' : 'hidden'}>
+        <span class="tile-ico">${I.pin}</span>
+        <div class="grow"><strong id="det-title">${esc(g?.title || '')}</strong><small id="det-text">${esc(g ? [g.line2, g.city, g.pincode].filter(Boolean).join(', ') : '')}</small></div>
+        <button type="button" class="link small" data-action="addr-edit">Edit</button>
       </div>
       <div class="fields">
-        <label class="field"><span>Delivery address</span><input name="line1" required maxlength="120" autocomplete="address-line1" placeholder="House / flat, building, street" /></label>
+        <label class="field"><span>House / flat / floor no.</span><input name="line1" required maxlength="120" autocomplete="address-line1" placeholder="e.g. Flat 302, 3rd floor, Sunrise Apartments" /></label>
       </div>
-      <div class="fields three">
-        <label class="field"><span>Area</span><input name="line2" maxlength="120" autocomplete="address-line2" placeholder="Optional" /></label>
-        <label class="field"><span>City</span><input name="city" required maxlength="60" autocomplete="address-level2" /></label>
-        <label class="field"><span>PIN code</span><input name="pincode" required inputmode="numeric" pattern="[1-9][0-9]{5}" maxlength="6" autocomplete="postal-code" /></label>
-      </div>
-      <div class="fields">
-        <label class="field"><span>Landmark</span><input name="landmark" maxlength="80" placeholder="Optional" /></label>
-      </div>
-      <details class="manual-loc">
-        <summary class="link small">Enter the map position by hand</summary>
-        <div class="fields two">
-          <label class="field"><span>Latitude</span><input name="lat" inputmode="decimal" value="${draftLoc?.lat ?? ''}" placeholder="12.9716" /></label>
-          <label class="field"><span>Longitude</span><input name="lng" inputmode="decimal" value="${draftLoc?.lng ?? ''}" placeholder="77.5946" /></label>
+      <div id="addr-more" ${short ? 'hidden' : ''}>
+        <div class="fields three">
+          <label class="field"><span>Area / street</span><input name="line2" maxlength="120" autocomplete="address-line2" placeholder="Optional" value="${esc(g?.line2 || '')}" /></label>
+          <label class="field"><span>City</span><input name="city" required maxlength="60" autocomplete="address-level2" value="${esc(g?.city || '')}" /></label>
+          <label class="field"><span>PIN code</span><input name="pincode" required inputmode="numeric" pattern="[1-9][0-9]{5}" maxlength="6" autocomplete="postal-code" value="${esc(g?.pincode || '')}" /></label>
         </div>
-      </details>
+        <div class="fields">
+          <label class="field"><span>Landmark</span><input name="landmark" maxlength="80" placeholder="Optional" /></label>
+        </div>
+        <details class="manual-loc">
+          <summary class="link small">Enter the map position by hand</summary>
+          <div class="fields two">
+            <label class="field"><span>Latitude</span><input name="lat" inputmode="decimal" value="${draftLoc?.lat ?? ''}" placeholder="12.9716" /></label>
+            <label class="field"><span>Longitude</span><input name="lng" inputmode="decimal" value="${draftLoc?.lng ?? ''}" placeholder="77.5946" /></label>
+          </div>
+        </details>
+      </div>
       <div class="form-btns">
         <button type="button" class="btn soft" data-action="back">Cancel</button>
         <button class="btn">${next === 'checkout' ? 'Save and continue' : 'Save address'}</button>
       </div>
     </form>`;
+  };
+
+  // Map position -> street address, with OpenStreetMap's free lookup (no key; one request per tap)
+  async function reverseGeocode({ lat, lng }) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 8000);
+    try {
+      const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&addressdetails=1&zoom=18&accept-language=en&lat=${lat}&lon=${lng}`,
+        { headers: { Accept: 'application/json' }, signal: ctl.signal });
+      if (!r.ok) throw new Error('lookup failed');
+      const a = (await r.json()).address || {};
+      // no shop / building names: the phone's position often snaps to the place next door
+      const parts = [a.road, a.neighbourhood || a.residential, a.suburb || a.quarter]
+        .filter((p, i, all) => p && all.indexOf(p) === i);
+      return {
+        title: a.neighbourhood || a.suburb || a.quarter || a.road || a.city_district || a.city || a.town || '',
+        line2: parts.join(', ').slice(0, 120),
+        city: (a.city || a.town || a.village || a.municipality || a.state_district || a.county || '').slice(0, 60),
+        pincode: String(a.postcode || '').replace(/\s/g, ''),
+      };
+    } finally { clearTimeout(timer); }
+  }
+
+  // Puts a found address into the form: complete -> show it as a card and leave only the house / flat field
+  function showGeo(f, g) {
+    f.line2.value = g.line2; f.city.value = g.city; f.pincode.value = g.pincode;
+    const short = geoComplete(g);
+    document.getElementById('det-title').textContent = g.title || g.city;
+    document.getElementById('det-text').textContent = [g.line2, g.city, g.pincode].filter(Boolean).join(', ');
+    document.getElementById('addr-detected').hidden = !short;
+    document.getElementById('addr-more').hidden = short;
+  }
+
+  A.action('addr-edit', (el) => {
+    document.getElementById('addr-more').hidden = false;
+    el.closest('form').line2.focus();
+  });
 
   A.action('locate', (el) => {
     const text = document.getElementById('loc-text');
-    if (!navigator.geolocation) { text.textContent = 'This browser cannot share its location. Enter the map position by hand.'; return; }
+    if (!navigator.geolocation) { text.textContent = 'This browser cannot share its location. Enter the address and map position by hand.'; return; }
     el.disabled = true; text.textContent = 'Finding your location…';
-    navigator.geolocation.getCurrentPosition((p) => {
+    navigator.geolocation.getCurrentPosition(async (p) => {
       draftLoc = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6) };
       const f = el.closest('form');
       f.lat.value = draftLoc.lat; f.lng.value = draftLoc.lng;
-      text.innerHTML = `${I.check} Location set`;
+      text.textContent = 'Finding your address…';
+      try {
+        draftGeo = await reverseGeocode(draftLoc);
+        if (!f.isConnected) return; // left the page meanwhile
+        showGeo(f, draftGeo);
+        text.innerHTML = geoComplete(draftGeo) ? `${I.check} Location set. Add your house / flat / floor.` : `${I.check} Location set. Check the address below.`;
+        f.line1.focus();
+      } catch {
+        text.innerHTML = `${I.check} Location set. Type the address below.`;
+      }
       el.disabled = false;
     }, () => {
-      text.textContent = 'Could not read your location. Allow location access, or enter the map position by hand.';
+      text.textContent = 'Could not read your location. Allow location access, or enter the address by hand.';
       el.disabled = false;
     }, { enableHighAccuracy: true, timeout: 15000 });
   });
@@ -141,7 +201,7 @@
     };
     state.addresses.forEach((a) => { a.isDefault = false; });
     state.addresses.push(addr);
-    draftLoc = null;
+    draftLoc = null; draftGeo = null;
     A.clearQuote(); A.save();
     A.toast(hasLoc || A.demo ? 'Address saved' : 'Address saved. Add its location before ordering delivery.');
     A.renderHeader();
@@ -207,7 +267,15 @@
           </div>
         </section>`;
     },
-    mount() { document.querySelector('[name="line1"]')?.focus(); },
+    mount() {
+      document.querySelector('[name="line1"]')?.focus();
+      // Like the delivery apps: if location access is already allowed, fill the address straight away
+      if (!draftLoc && navigator.permissions?.query) {
+        navigator.permissions.query({ name: 'geolocation' })
+          .then((s) => { if (s.state === 'granted') document.querySelector('[data-action="locate"]')?.click(); })
+          .catch(() => {});
+      }
+    },
   });
 
   /* ---------- Addresses ---------- */

@@ -345,6 +345,10 @@ svg { width: 18px; height: 18px; flex-shrink: 0; }
 .locate { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
 .locate small { display: inline-flex; align-items: center; gap: 4px; }
 .locate small svg { width: 14px; height: 14px; color: var(--green-fg); }
+.detected { display: flex; align-items: center; gap: 12px; margin-top: 12px; padding: 12px 14px; border-radius: var(--r-control); background: var(--surface); }
+.detected strong { display: block; font-size: 14px; font-weight: 600; }
+.detected small { display: block; color: var(--body); font-size: 12px; }
+.detected .tile-ico { background: #fff; flex: none; }
 .manual-loc { margin-top: 10px; }
 .manual-loc summary { cursor: pointer; display: inline-block; }
 .form-btns { display: flex; gap: 10px; justify-content: flex-end; margin-top: 14px; }
