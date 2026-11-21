@@ -9,8 +9,8 @@ window.TIFFIN_CONFIG = {
   // Demo mode: a sample menu with a pretend kitchen that moves orders along by itself. Nothing reaches the POS.
   //   false: never (production). Orders and their status always come from the hub and the POS ODS; if the hub
   //          cannot be reached, the site says so and offers to try again.
-  //   true:  show the demo when the hub cannot be reached or the store has no menu yet (previews, design work).
-  // For testing, override it in the address bar: index.html?demo=1
+  //   true:  always show the demo, even when the hub works (sample menu; the login code is shown on screen).
+  // For testing, turn it on from the address bar: index.html?demo=1
   demo: true,
 
   // Optional: what the website says about the restaurant. Empty values are left out.

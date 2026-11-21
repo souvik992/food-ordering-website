@@ -255,14 +255,16 @@
   // why: 'unreachable' (no answer from the hub) or 'no-menu' (the hub answers, but the restaurant's POS has not connected yet)
   function showDemoBanner(why) {
     const $b = document.getElementById('demo-banner');
-    const long = why === 'no-menu'
+    const long = why === 'on' ? 'This is a preview with sample dishes.'
+      : why === 'no-menu'
       ? 'The restaurant’s online menu is not connected yet, so this is a preview with sample dishes.'
       : 'We can’t reach the restaurant’s order system right now, so this is a preview with sample dishes.';
+    const short = why === 'on' ? 'Preview' : why === 'no-menu' ? 'Menu not connected yet' : 'Restaurant offline';
     $b.innerHTML = `
       <div class="container demo-inner">
         <span class="demo-ico">!</span>
-        <p><b>Demo mode.</b> <span class="xs-hide">${long} Orders placed here are <b>not sent to the restaurant</b>.</span><span class="xs-show">${why === 'no-menu' ? 'Menu not connected yet' : 'Restaurant offline'}: sample dishes, orders are <b>not sent</b>.</span></p>
-        <button class="btn sm outline" data-action="reload">Try again</button>
+        <p><b>Demo mode.</b> <span class="xs-hide">${long} Orders placed here are <b>not sent to the restaurant</b>.</span><span class="xs-show">${short}: sample dishes, orders are <b>not sent</b>.</span></p>
+        ${why === 'on' ? '' : '<button class="btn sm outline" data-action="reload">Try again</button>'}
       </div>`;
     $b.hidden = false;
     document.body.classList.add('is-demo');
@@ -324,18 +326,22 @@
 
   async function start() {
     $app.innerHTML = `<section class="page container"><div class="loading"><span class="spinner"></span><p>Loading the menu…</p></div></section>`;
-    if (Hub.brand && !new URLSearchParams(location.search).has('demo')) return startBrand();
+    if (Hub.brand && !new URLSearchParams(location.search).has('demo') && C.demo !== true) return startBrand();
     // No hub, or the restaurant's POS has not connected to it yet (no store or no menu): show the demo website
     // (sample menu, everything works, nothing reaches the restaurant). A store with a menu that is closed shows as usual.
-    let shop = null, why = null;
-    try {
-      shop = await Hub.store();
-      if (!shop.menu) why = 'no-menu';
-    } catch (err) {
-      why = err.code === 'NETWORK' || !err.status || err.status >= 500 ? 'unreachable' : 'no-menu';
+    // demo: true in js/config.js (or ?demo=1): always the demo website, even when the hub works. Its test code shows on screen.
+    const forced = new URLSearchParams(location.search).has('demo') || C.demo === true;
+    let shop = null, why = forced ? 'on' : null;
+    if (!forced) {
+      try {
+        shop = await Hub.store();
+        if (!shop.menu) why = 'no-menu';
+      } catch (err) {
+        why = err.code === 'NETWORK' || !err.status || err.status >= 500 ? 'unreachable' : 'no-menu';
+      }
     }
     // the builder's preview shows the sample menu when the store has none yet, so the design can still be seen
-    const demoAllowed = new URLSearchParams(location.search).has('demo') || C.demo === true || A.preview;
+    const demoAllowed = forced || A.preview;
     if (why && !demoAllowed) {
       // Production: never fall back to the pretend kitchen. Say what is wrong and load the real menu once the hub answers.
       console.warn(`Order hub problem: ${why === 'no-menu' ? 'the store has no menu on the hub yet' : 'the hub cannot be reached'}.`);
@@ -347,11 +353,11 @@
       return;
     }
     if (why) {
-      console.warn(`Showing the demo website (${why === 'no-menu' ? 'the store has no menu on the hub yet' : 'the order hub cannot be reached'}).`);
+      console.warn(`Showing the demo website (${why === 'on' ? 'demo mode is switched on' : why === 'no-menu' ? 'the store has no menu on the hub yet' : 'the order hub cannot be reached'}).`);
       A.enterDemo();
       shop = await Hub.store();
       showDemoBanner(why);
-      watchForHub();
+      if (why !== 'on') watchForHub();
     }
     A.setShop(shop);
     A.applySite(shop.site); // the published design (the builder's preview gets its draft by message)
