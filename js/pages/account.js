@@ -55,7 +55,7 @@
 
   /* ---------- Address form (the "Add delivery address" page). Delivery needs the map location: the hub uses it for distance and fee ---------- */
   let draftLoc = null;
-  // The street address found for draftLoc (like Swiggy/Zomato): { title, line2, city, pincode }.
+  // The street address found for draftLoc (like Swiggy/Zomato): { line2, city, pincode }.
   // When it is complete, the customer only types the house / flat / floor.
   let draftGeo = null;
   const geoComplete = (g) => Boolean(g && g.city && /^[1-9]\d{5}$/.test(g.pincode));
@@ -72,20 +72,15 @@
         <button type="button" class="btn outline sm" data-action="locate">${I.locate} Use my current location</button>
         <small class="muted" id="loc-text">${draftLoc ? `${I.check} Location set` : 'Needed for delivery. We fill in the address for you.'}</small>
       </div>
-      <div class="detected" id="addr-detected" ${short ? '' : 'hidden'}>
-        <span class="tile-ico">${I.pin}</span>
-        <div class="grow"><strong id="det-title">${esc(g?.title || '')}</strong><small id="det-text">${esc(g ? [g.line2, g.city, g.pincode].filter(Boolean).join(', ') : '')}</small></div>
-        <button type="button" class="link small" data-action="addr-edit">Edit</button>
-      </div>
       <div class="fields">
         <label class="field"><span>House / flat / floor no.</span><input name="line1" required maxlength="120" autocomplete="address-line1" placeholder="e.g. Flat 302, 3rd floor, Sunrise Apartments" /></label>
       </div>
+      <div class="fields three">
+        <label class="field"><span>Area / street</span><input name="line2" maxlength="120" autocomplete="address-line2" placeholder="Optional" value="${esc(g?.line2 || '')}" ${short ? 'readonly' : ''} /></label>
+        <label class="field"><span>City</span><input name="city" required maxlength="60" autocomplete="address-level2" value="${esc(g?.city || '')}" ${short ? 'readonly' : ''} /></label>
+        <label class="field"><span>PIN code</span><input name="pincode" required inputmode="numeric" pattern="[1-9][0-9]{5}" maxlength="6" autocomplete="postal-code" value="${esc(g?.pincode || '')}" ${short ? 'readonly' : ''} /></label>
+      </div>
       <div id="addr-more" ${short ? 'hidden' : ''}>
-        <div class="fields three">
-          <label class="field"><span>Area / street</span><input name="line2" maxlength="120" autocomplete="address-line2" placeholder="Optional" value="${esc(g?.line2 || '')}" /></label>
-          <label class="field"><span>City</span><input name="city" required maxlength="60" autocomplete="address-level2" value="${esc(g?.city || '')}" /></label>
-          <label class="field"><span>PIN code</span><input name="pincode" required inputmode="numeric" pattern="[1-9][0-9]{5}" maxlength="6" autocomplete="postal-code" value="${esc(g?.pincode || '')}" /></label>
-        </div>
         <div class="fields">
           <label class="field"><span>Landmark</span><input name="landmark" maxlength="80" placeholder="Optional" /></label>
         </div>
@@ -117,7 +112,6 @@
       const parts = [a.road, a.neighbourhood || a.residential, a.suburb || a.quarter]
         .filter((p, i, all) => p && all.indexOf(p) === i);
       return {
-        title: a.neighbourhood || a.suburb || a.quarter || a.road || a.city_district || a.city || a.town || '',
         line2: parts.join(', ').slice(0, 120),
         city: (a.city || a.town || a.village || a.municipality || a.state_district || a.county || '').slice(0, 60),
         pincode: String(a.postcode || '').replace(/\s/g, ''),
@@ -125,20 +119,13 @@
     } finally { clearTimeout(timer); }
   }
 
-  // Puts a found address into the form: complete -> show it as a card and leave only the house / flat field
+  // Puts a found address into the form: complete -> area, city and PIN are locked, only the house / flat field is typed
   function showGeo(f, g) {
     f.line2.value = g.line2; f.city.value = g.city; f.pincode.value = g.pincode;
     const short = geoComplete(g);
-    document.getElementById('det-title').textContent = g.title || g.city;
-    document.getElementById('det-text').textContent = [g.line2, g.city, g.pincode].filter(Boolean).join(', ');
-    document.getElementById('addr-detected').hidden = !short;
+    [f.line2, f.city, f.pincode].forEach((i) => { i.readOnly = short; });
     document.getElementById('addr-more').hidden = short;
   }
-
-  A.action('addr-edit', (el) => {
-    document.getElementById('addr-more').hidden = false;
-    el.closest('form').line2.focus();
-  });
 
   A.action('locate', (el) => {
     const text = document.getElementById('loc-text');
