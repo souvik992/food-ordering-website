@@ -343,6 +343,21 @@
     }, 60_000);
   }
 
+  /** The design published in the website builder (store, or the brand's main outlet), with its uploaded images
+   *  ("hub:<name>") turned into full hub links, since the demo serves its own sample photos. Null if the hub can't say. */
+  async function publishedSite() {
+    try {
+      let site, slug = Hub.slug;
+      if (Hub.brand) { const b = await Hub.brandInfo(); site = b.site; slug = b.outlets?.[0]?.slug || ''; } // images: an outlet of the brand
+      else site = (await Hub.store()).site;
+      if (!site) return null;
+      const img = (name) => `${Hub.base}/v1/stores/${encodeURIComponent(slug)}/images/${encodeURIComponent(name)}`;
+      const fix = (v) => (typeof v === 'string' ? (v.startsWith('hub:') && slug ? img(v.slice(4)) : v)
+        : Array.isArray(v) ? v.map(fix) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, fix(x)])) : v);
+      return fix(site);
+    } catch { return null; } // hub down: the demo's own look
+  }
+
   async function start() {
     $app.innerHTML = `<section class="page container"><div class="loading"><span class="spinner"></span><p>Loading the menu…</p></div></section>`;
     if (Hub.brand && !new URLSearchParams(location.search).has('demo') && C.demo !== true) return startBrand();
@@ -373,7 +388,10 @@
     }
     if (why) {
       console.warn(`Showing the demo website (${why === 'on' ? 'demo mode is switched on' : why === 'no-menu' ? 'the store has no menu on the hub yet' : 'the order hub cannot be reached'}).`);
+      // The demo keeps the restaurant's own published design (logo, theme, texts) when the hub has one: sample menu, real look
+      const site = why === 'unreachable' ? null : await publishedSite();
       A.enterDemo();
+      if (site) { const demoStore = Hub.store; Hub.store = async () => ({ ...(await demoStore()), site }); }
       shop = await Hub.store();
       showDemoBanner(why);
       if (why !== 'on') watchForHub();
